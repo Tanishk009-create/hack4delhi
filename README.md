@@ -1,3 +1,4 @@
+References and Links
 1. AI-powered TrackEi™ (L&T Technology Services): High-speed, AI-enabled rail inspection using cameras and laser profiling for real-time defect detection and maintenance planning.
 2. Track Geometry Cars: Sensor-equipped inspection vehicles widely used for automated track measurement (alignment, twist, gauge) without disrupting operations.
 3. Track IQ (Wabtec): Multi-sensor systems (acoustic & condition monitors) deployed globally to detect wheel/track faults, showing industry adoption of sensing-based safety.
