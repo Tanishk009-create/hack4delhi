@@ -1,24 +1,48 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
 } from "recharts";
 import L from "leaflet";
 import io from "socket.io-client";
 import axios from "axios";
 import "leaflet/dist/leaflet.css";
 
-// --- ICONS & ASSETS ---
-const getIcon = (color) =>
-  new L.Icon({
-    iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/markers-default/${color}-marker.png`,
-    shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41],
+// --- FIX: ROBUST SVG ICONS (Replaces broken Image URLs) ---
+const getIcon = (colorName) => {
+  const colors = {
+    green: "#22c55e", // Success
+    yellow: "#eab308", // Warning
+    red: "#ef4444", // Danger
+    grey: "#64748b", // Inactive
+  };
+  const hex = colors[colorName] || colors.grey;
+
+  return new L.DivIcon({
+    className: "custom-marker",
+    html: `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${hex}" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); width: 36px; height: 36px;">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+        <circle cx="12" cy="10" r="3" fill="#ffffff"></circle>
+      </svg>
+    `,
+    iconSize: [36, 36],
+    iconAnchor: [18, 36], // Point of the pin touches the location
+    popupAnchor: [0, -36], // Popup opens above the pin
   });
+};
 
 const icons = {
   green: getIcon("green"),
@@ -33,26 +57,36 @@ const API_URL = "http://localhost:3000/api/alerts";
 
 export default function Dashboard() {
   // --- STATE ---
-  const [mode, setMode] = useState('LIVE'); // 'LIVE' or 'TEST'
-  
+  const [mode, setMode] = useState("LIVE"); // 'LIVE' or 'TEST'
+
   const [nodes, setNodes] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [telemetry, setTelemetry] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
-  
+
   // UX State
-  const [activeTab, setActiveTab] = useState('telemetry');
-  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [activeTab, setActiveTab] = useState("telemetry");
+  const [filterStatus, setFilterStatus] = useState("ALL");
   const [replayMode, setReplayMode] = useState(false);
   const [replayIndex, setReplayIndex] = useState(50);
-  
+
   // Logging State
   const [systemLogs, setSystemLogs] = useState([
-    { id: 0, time: new Date().toLocaleTimeString(), type: 'info', msg: 'System initialized. Waiting for stream selection...' }
+    {
+      id: 0,
+      time: new Date().toLocaleTimeString(),
+      type: "info",
+      msg: "System initialized. Waiting for stream selection...",
+    },
   ]);
 
-  const addLog = (msg, type = 'info') => {
-    setSystemLogs(prev => [{ id: Date.now(), time: new Date().toLocaleTimeString(), type, msg }, ...prev].slice(0, 50));
+  const addLog = (msg, type = "info") => {
+    setSystemLogs((prev) =>
+      [
+        { id: Date.now(), time: new Date().toLocaleTimeString(), type, msg },
+        ...prev,
+      ].slice(0, 50)
+    );
   };
 
   // --- EFFECT: HANDLE MODE SWITCHING ---
@@ -64,105 +98,148 @@ export default function Dashboard() {
     setSystemLogs([]);
     addLog(`Switched to ${mode} MODE`, "warning");
 
-    if (mode === 'LIVE') {
-        socket.connect();
-        fetchAlerts(); 
-        
-        socket.on("connect", () => addLog("Connected to Backend Server", "success"));
-        socket.on("disconnect", () => addLog("Lost connection to Backend Server", "error"));
+    if (mode === "LIVE") {
+      socket.connect();
+      fetchAlerts();
 
-        socket.on("sensor_update", (data) => {
-            updateNodesAndTelemetry(data);
-        });
+      socket.on("connect", () =>
+        addLog("Connected to Backend Server", "success")
+      );
+      socket.on("disconnect", () =>
+        addLog("Lost connection to Backend Server", "error")
+      );
 
-        socket.on("new_alert", (newAlert) => {
-            // --- 🔊 AUDIO ALERT ---
-            try {
-                const audio = new Audio('/alert.mp3');
-                audio.play().catch(e => console.log("Audio play failed (browser policy):", e));
-            } catch (err) {
-                console.error("Audio error", err);
-            }
-            // -----------------------
+      socket.on("sensor_update", (data) => {
+        updateNodesAndTelemetry(data);
+      });
 
-            setAlerts((prev) => [newAlert, ...prev]); 
-            setNodes((prev) => ({
-                ...prev,
-                [newAlert.nodeId]: { ...prev[newAlert.nodeId], status: newAlert.severity === "HIGH" ? "red" : "yellow" },
-            }));
-            addLog(`ANOMALY DETECTED: Node ${newAlert.nodeId} | Severity: ${newAlert.severity}`, "error");
-        });
+      socket.on("new_alert", (newAlert) => {
+        // --- 🔊 AUDIO ALERT ---
+        try {
+          const audio = new Audio("/alert.mp3");
+          audio
+            .play()
+            .catch((e) =>
+              console.log("Audio play failed (browser policy):", e)
+            );
+        } catch (err) {
+          console.error("Audio error", err);
+        }
+        // -----------------------
 
-        socket.on("alert_update", (updatedAlert) => {
-            setAlerts((prev) => prev.map((a) => (a.id === updatedAlert.id ? updatedAlert : a)));
-            if(updatedAlert.isConstruction) addLog(`Update: Alert ${updatedAlert.id} marked as CONSTRUCTION activity.`, "warning");
-        });
+        setAlerts((prev) => [newAlert, ...prev]);
+        setNodes((prev) => ({
+          ...prev,
+          [newAlert.nodeId]: {
+            ...prev[newAlert.nodeId],
+            status: newAlert.severity === "HIGH" ? "red" : "yellow",
+          },
+        }));
+        addLog(
+          `ANOMALY DETECTED: Node ${newAlert.nodeId} | Severity: ${newAlert.severity}`,
+          "error"
+        );
+      });
+
+      socket.on("alert_update", (updatedAlert) => {
+        setAlerts((prev) =>
+          prev.map((a) => (a.id === updatedAlert.id ? updatedAlert : a))
+        );
+        if (updatedAlert.isConstruction)
+          addLog(
+            `Update: Alert ${updatedAlert.id} marked as CONSTRUCTION activity.`,
+            "warning"
+          );
+      });
     } else {
-        socket.disconnect();
-        // Initialize Dummy Nodes for Test Mode
-        setNodes({
-            'TEST-NODE-01': { lat: 28.6139, lng: 77.2090, status: 'green', battery: 98, rssi: -45 },
-            'TEST-NODE-02': { lat: 28.6150, lng: 77.2100, status: 'green', battery: 85, rssi: -60 },
-            'TEST-NODE-03': { lat: 28.6120, lng: 77.2080, status: 'yellow', battery: 40, rssi: -80 }
-        });
-        addLog("Test Mode Initialized. Simulating sensor data...", "info");
+      socket.disconnect();
+      // Initialize Dummy Nodes for Test Mode
+      setNodes({
+        "TEST-NODE-01": {
+          lat: 28.6139,
+          lng: 77.209,
+          status: "green",
+          battery: 98,
+          rssi: -45,
+        },
+        "TEST-NODE-02": {
+          lat: 28.615,
+          lng: 77.21,
+          status: "green",
+          battery: 85,
+          rssi: -60,
+        },
+        "TEST-NODE-03": {
+          lat: 28.612,
+          lng: 77.208,
+          status: "yellow",
+          battery: 40,
+          rssi: -80,
+        },
+      });
+      addLog("Test Mode Initialized. Simulating sensor data...", "info");
     }
 
     return () => {
-        socket.off("connect");
-        socket.off("disconnect");
-        socket.off("sensor_update");
-        socket.off("new_alert");
-        socket.off("alert_update");
+      socket.off("connect");
+      socket.off("disconnect");
+      socket.off("sensor_update");
+      socket.off("new_alert");
+      socket.off("alert_update");
     };
   }, [mode]);
 
   // --- EFFECT: TEST MODE SIMULATION LOOP ---
   useEffect(() => {
-    if (mode !== 'TEST') return;
+    if (mode !== "TEST") return;
 
     const interval = setInterval(() => {
-        const timestamp = Date.now();
-        const t = timestamp / 1000;
-        const fakeData = {
-            node_id: 'TEST-NODE-01',
-            timestamp: timestamp,
-            lat: 28.6139, lng: 77.2090,
-            accel_mag: Math.abs(Math.sin(t)) * 0.5 + Math.random() * 0.1, 
-            accel_roll_rms: Math.abs(Math.sin(t)) * 0.3,
-            mag_norm: 45 + Math.cos(t) * 5, 
-            temperature: 28 + Math.random(),
-            humidity: 60 + Math.random() * 2,
-            pressure: 1013,
-            anomaly_score: Math.random() > 0.9 ? -0.5 : 0.5
-        };
+      const timestamp = Date.now();
+      const t = timestamp / 1000;
+      const fakeData = {
+        node_id: "TEST-NODE-01",
+        timestamp: timestamp,
+        lat: 28.6139,
+        lng: 77.209,
+        accel_mag: Math.abs(Math.sin(t)) * 0.5 + Math.random() * 0.1,
+        accel_roll_rms: Math.abs(Math.sin(t)) * 0.3,
+        mag_norm: 45 + Math.cos(t) * 5,
+        temperature: 28 + Math.random(),
+        humidity: 60 + Math.random() * 2,
+        pressure: 1013,
+        anomaly_score: Math.random() > 0.9 ? -0.5 : 0.5,
+      };
 
-        updateNodesAndTelemetry(fakeData);
+      updateNodesAndTelemetry(fakeData);
 
-        if (Math.random() > 0.98) {
-            // --- 🔊 AUDIO ALERT (TEST MODE) ---
-            try {
-                const audio = new Audio('/alert.mp3');
-                audio.play().catch(e => console.log("Audio play failed (browser policy):", e));
-            } catch (err) {
-                console.error("Audio error", err);
-            }
-            // ----------------------------------
-
-            const fakeAlert = {
-                id: timestamp,
-                timestamp: timestamp,
-                nodeId: 'TEST-NODE-03',
-                lat: 28.6120, lng: 77.2080,
-                severity: Math.random() > 0.5 ? 'HIGH' : 'MEDIUM',
-                status: 'OPEN', 
-                isConstruction: false
-            };
-            setAlerts(prev => [fakeAlert, ...prev]);
-            addLog(`[SIMULATION] Alert generated on TEST-NODE-03`, "error");
+      if (Math.random() > 0.98) {
+        // --- 🔊 AUDIO ALERT (TEST MODE) ---
+        try {
+          const audio = new Audio("/alert.mp3");
+          audio
+            .play()
+            .catch((e) =>
+              console.log("Audio play failed (browser policy):", e)
+            );
+        } catch (err) {
+          console.error("Audio error", err);
         }
+        // ----------------------------------
 
-    }, 800); 
+        const fakeAlert = {
+          id: timestamp,
+          timestamp: timestamp,
+          nodeId: "TEST-NODE-03",
+          lat: 28.612,
+          lng: 77.208,
+          severity: Math.random() > 0.5 ? "HIGH" : "MEDIUM",
+          status: "OPEN",
+          isConstruction: false,
+        };
+        setAlerts((prev) => [fakeAlert, ...prev]);
+        addLog(`[SIMULATION] Alert generated on TEST-NODE-03`, "error");
+      }
+    }, 800);
 
     return () => clearInterval(interval);
   }, [mode]);
@@ -170,42 +247,45 @@ export default function Dashboard() {
   // --- HELPER: Update State ---
   const updateNodesAndTelemetry = (data) => {
     setNodes((prev) => ({
-        ...prev,
-        [data.node_id]: {
-          lat: data.lat || data.latitude,
-          lng: data.lng || data.longitude,
-          alt: data.altitude || 0,
-          lastSeen: data.timestamp,
-          status: prev[data.node_id]?.status || 'green', 
-          battery: Math.max(0, 100 - (Date.now() % 100000) / 1000), 
-          rssi: -40 - Math.random() * 10
-        },
+      ...prev,
+      [data.node_id]: {
+        lat: data.lat || data.latitude,
+        lng: data.lng || data.longitude,
+        alt: data.altitude || 0,
+        lastSeen: data.timestamp,
+        status: prev[data.node_id]?.status || "green",
+        battery: Math.max(0, 100 - (Date.now() % 100000) / 1000),
+        rssi: -40 - Math.random() * 10,
+      },
     }));
 
     setTelemetry((prev) => {
-        const newData = [...prev, {
-            time: new Date(data.timestamp).toLocaleTimeString(),
-            node_id: data.node_id,
-            accel_mag: data.accel_mag,
-            accel_roll_rms: data.accel_roll_rms,
-            mag_norm: data.mag_norm,
-            temperature: data.temperature,
-            humidity: data.humidity,
-            pressure: data.pressure,
-            anomaly_score: data.anomaly_score
-        }];
-        return newData.slice(-100); 
+      const newData = [
+        ...prev,
+        {
+          time: new Date(data.timestamp).toLocaleTimeString(),
+          node_id: data.node_id,
+          accel_mag: data.accel_mag,
+          accel_roll_rms: data.accel_roll_rms,
+          mag_norm: data.mag_norm,
+          temperature: data.temperature,
+          humidity: data.humidity,
+          pressure: data.pressure,
+          anomaly_score: data.anomaly_score,
+        },
+      ];
+      return newData.slice(-100);
     });
   };
 
   // --- ACTIONS ---
   const fetchAlerts = async () => {
-    if (mode === 'TEST') return; 
+    if (mode === "TEST") return;
     try {
       const res = await axios.get(API_URL);
-      const mappedAlerts = res.data.map(a => ({
-          ...a,
-          status: a.isConstruction ? 'CONSTRUCTION' : (a.status || 'OPEN')
+      const mappedAlerts = res.data.map((a) => ({
+        ...a,
+        status: a.isConstruction ? "CONSTRUCTION" : a.status || "OPEN",
       }));
       setAlerts(mappedAlerts);
     } catch (err) {
@@ -214,97 +294,268 @@ export default function Dashboard() {
   };
 
   const handleResolutionChange = async (alertId, resolution) => {
-      setAlerts(prev => prev.map(a => 
-          a.id === alertId ? { 
-              ...a, 
-              status: resolution, 
-              isConstruction: resolution === 'CONSTRUCTION' 
-          } : a
-      ));
+    setAlerts((prev) =>
+      prev.map((a) =>
+        a.id === alertId
+          ? {
+              ...a,
+              status: resolution,
+              isConstruction: resolution === "CONSTRUCTION",
+            }
+          : a
+      )
+    );
 
-      addLog(`User Action: Marking alert ${alertId} as ${resolution}`, "info");
+    addLog(`User Action: Marking alert ${alertId} as ${resolution}`, "info");
 
-      if (mode === 'TEST') return;
+    if (mode === "TEST") return;
 
-      try {
-          if (resolution === 'CONSTRUCTION') {
-              await axios.post(`${API_URL}/mark-construction`, { id: alertId });
-          } else if (resolution === 'CLOSED') {
-              // Placeholder for close API
-          }
-      } catch (err) {
-          addLog(`Error: Sync failed with backend`, "error");
+    try {
+      if (resolution === "CONSTRUCTION") {
+        await axios.post(`${API_URL}/mark-construction`, { id: alertId });
+      } else if (resolution === "CLOSED") {
+        // Placeholder for close API
       }
+    } catch (err) {
+      addLog(`Error: Sync failed with backend`, "error");
+    }
   };
 
   const handleDispatch = (alertId) => {
-      addLog(`DISPATCH: Inspection Team Alpha sent to Site ID: ${alertId}`, "success");
+    addLog(
+      `DISPATCH: Inspection Team Alpha sent to Site ID: ${alertId}`,
+      "success"
+    );
   };
 
   // --- DATA PROCESSING ---
   const filteredAlerts = useMemo(() => {
-      if (filterStatus === 'ALL') return alerts;
-      if (filterStatus === 'HIGH') return alerts.filter(a => a.severity === 'HIGH');
-      if (filterStatus === 'CONSTRUCTION') return alerts.filter(a => a.status === 'CONSTRUCTION');
-      if (filterStatus === 'CLOSED') return alerts.filter(a => a.status === 'CLOSED');
-      return alerts;
+    if (filterStatus === "ALL") return alerts;
+    if (filterStatus === "HIGH")
+      return alerts.filter((a) => a.severity === "HIGH");
+    if (filterStatus === "CONSTRUCTION")
+      return alerts.filter((a) => a.status === "CONSTRUCTION");
+    if (filterStatus === "CLOSED")
+      return alerts.filter((a) => a.status === "CLOSED");
+    return alerts;
   }, [alerts, filterStatus]);
 
   const displayTelemetry = useMemo(() => {
-    let data = selectedNode ? telemetry.filter(t => t.node_id === selectedNode) : telemetry;
+    let data = selectedNode
+      ? telemetry.filter((t) => t.node_id === selectedNode)
+      : telemetry;
     if (replayMode) {
-        const endIndex = Math.floor((replayIndex / 100) * data.length);
-        const startIndex = Math.max(0, endIndex - 20);
-        return data.slice(startIndex, endIndex);
+      const endIndex = Math.floor((replayIndex / 100) * data.length);
+      const startIndex = Math.max(0, endIndex - 20);
+      return data.slice(startIndex, endIndex);
     }
-    return data.slice(-20); 
+    return data.slice(-20);
   }, [telemetry, selectedNode, replayMode, replayIndex]);
 
-  const latestEnv = displayTelemetry.length > 0 ? displayTelemetry[displayTelemetry.length - 1] : {};
+  const latestEnv =
+    displayTelemetry.length > 0
+      ? displayTelemetry[displayTelemetry.length - 1]
+      : {};
   const currentNode = selectedNode ? nodes[selectedNode] : null;
 
   // --- STYLES ---
   const styles = {
-    container: { display: "flex", flexDirection: "column", height: "100vh", width: "100%", overflow: "hidden", fontFamily: "'Inter', sans-serif", backgroundColor: "#f8fafc" },
-    header: { height: "60px", background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", flexShrink: 0, boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)", zIndex: 50 },
-    statusBadge: { display: "flex", alignItems: "center", gap: "8px", padding: "6px 12px", background: "rgba(34, 197, 94, 0.1)", border: "1px solid rgba(34, 197, 94, 0.3)", borderRadius: "20px" },
-    body: { display: "flex", flex: 1, height: "calc(100vh - 60px)", overflow: "hidden", width: "100%" },
-    leftPanel: { flex: "0 0 35%", height: "100%", position: "relative", borderRight: "1px solid #e2e8f0", zIndex: 10 },
-    rightPanel: { flex: 1, display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#f1f5f9", overflowY: "auto", minWidth: 0 },
-    
+    container: {
+      display: "flex",
+      flexDirection: "column",
+      height: "100vh",
+      width: "100%",
+      overflow: "hidden",
+      fontFamily: "'Inter', sans-serif",
+      backgroundColor: "#f8fafc",
+    },
+    header: {
+      height: "60px",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+      color: "white",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "0 24px",
+      flexShrink: 0,
+      boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)",
+      zIndex: 50,
+    },
+    statusBadge: {
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      padding: "6px 12px",
+      background: "rgba(34, 197, 94, 0.1)",
+      border: "1px solid rgba(34, 197, 94, 0.3)",
+      borderRadius: "20px",
+    },
+    body: {
+      display: "flex",
+      flex: 1,
+      height: "calc(100vh - 60px)",
+      overflow: "hidden",
+      width: "100%",
+    },
+    leftPanel: {
+      flex: "0 0 35%",
+      height: "100%",
+      position: "relative",
+      borderRight: "1px solid #e2e8f0",
+      zIndex: 10,
+    },
+    rightPanel: {
+      flex: 1,
+      display: "flex",
+      flexDirection: "column",
+      height: "100%",
+      backgroundColor: "#f1f5f9",
+      overflowY: "auto",
+      minWidth: 0,
+    },
+
     // KPI Cards
-    kpiRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', padding: '16px 16px 0 16px' },
-    kpiCard: { background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
-    kpiLabel: { fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' },
-    kpiValue: { fontSize: '1.25rem', fontWeight: 'bold', color: '#0f172a', marginTop: '4px' },
+    kpiRow: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr 1fr",
+      gap: "12px",
+      padding: "16px 16px 0 16px",
+    },
+    kpiCard: {
+      background: "white",
+      padding: "12px",
+      borderRadius: "8px",
+      border: "1px solid #e2e8f0",
+      boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+    },
+    kpiLabel: {
+      fontSize: "0.7rem",
+      color: "#64748b",
+      fontWeight: "600",
+      textTransform: "uppercase",
+    },
+    kpiValue: {
+      fontSize: "1.25rem",
+      fontWeight: "bold",
+      color: "#0f172a",
+      marginTop: "4px",
+    },
 
     // Alert Section
-    alertSection: { margin: "16px", display: "flex", flexDirection: "column", backgroundColor: "white", borderRadius: "12px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", border: "1px solid #e2e8f0", overflow: "hidden", flexShrink: 0, maxHeight: "40%" },
-    alertHeader: { padding: "12px 20px", borderBottom: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center", background: "white", position: "sticky", top: 0, zIndex: 20 },
+    alertSection: {
+      margin: "16px",
+      display: "flex",
+      flexDirection: "column",
+      backgroundColor: "white",
+      borderRadius: "12px",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+      border: "1px solid #e2e8f0",
+      overflow: "hidden",
+      flexShrink: 0,
+      maxHeight: "40%",
+    },
+    alertHeader: {
+      padding: "12px 20px",
+      borderBottom: "1px solid #f1f5f9",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      background: "white",
+      position: "sticky",
+      top: 0,
+      zIndex: 20,
+    },
     filterPill: (active) => ({
-        padding: '4px 10px', borderRadius: '15px', fontSize: '0.7rem', fontWeight: '600', cursor: 'pointer',
-        background: active ? '#e0f2fe' : '#f1f5f9', color: active ? '#0284c7' : '#64748b', border: 'none', marginRight: '8px'
+      padding: "4px 10px",
+      borderRadius: "15px",
+      fontSize: "0.7rem",
+      fontWeight: "600",
+      cursor: "pointer",
+      background: active ? "#e0f2fe" : "#f1f5f9",
+      color: active ? "#0284c7" : "#64748b",
+      border: "none",
+      marginRight: "8px",
     }),
 
     // Graph Section
-    graphSection: { padding: "0 16px 20px 16px", display: "flex", flexDirection: "column", flex: 1 },
-    tabHeader: { display: 'flex', gap: '20px', borderBottom: '1px solid #e2e8f0', marginBottom: '15px', paddingBottom: '5px' },
+    graphSection: {
+      padding: "0 16px 20px 16px",
+      display: "flex",
+      flexDirection: "column",
+      flex: 1,
+    },
+    tabHeader: {
+      display: "flex",
+      gap: "20px",
+      borderBottom: "1px solid #e2e8f0",
+      marginBottom: "15px",
+      paddingBottom: "5px",
+    },
     tab: (active) => ({
-        padding: '5px 0', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '600',
-        color: active ? '#3b82f6' : '#94a3b8', borderBottom: active ? '2px solid #3b82f6' : 'none'
+      padding: "5px 0",
+      cursor: "pointer",
+      fontSize: "0.9rem",
+      fontWeight: "600",
+      color: active ? "#3b82f6" : "#94a3b8",
+      borderBottom: active ? "2px solid #3b82f6" : "none",
     }),
-    gridContainer: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" },
-    chartCard: { background: "white", borderRadius: "12px", padding: "16px", border: "1px solid #e2e8f0", boxShadow: "0 1px 2px rgba(0,0,0,0.05)", height: "260px", display: "flex", flexDirection: "column" },
-    
+    gridContainer: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "16px",
+    },
+    chartCard: {
+      background: "white",
+      borderRadius: "12px",
+      padding: "16px",
+      border: "1px solid #e2e8f0",
+      boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+      height: "260px",
+      display: "flex",
+      flexDirection: "column",
+    },
+
     // Footer Console
-    footer: { height: "140px", backgroundColor: "#0f172a", color: "#e2e8f0", display: "flex", flexDirection: "column", borderTop: "4px solid #334155", flexShrink: 0, fontFamily: "'Courier New', monospace", zIndex: 60 },
-    consoleBody: { flex: 1, overflowY: "auto", padding: "10px 15px", fontSize: "0.8rem", lineHeight: "1.6" },
-    
+    footer: {
+      height: "140px",
+      backgroundColor: "#0f172a",
+      color: "#e2e8f0",
+      display: "flex",
+      flexDirection: "column",
+      borderTop: "4px solid #334155",
+      flexShrink: 0,
+      fontFamily: "'Courier New', monospace",
+      zIndex: 60,
+    },
+    consoleBody: {
+      flex: 1,
+      overflowY: "auto",
+      padding: "10px 15px",
+      fontSize: "0.8rem",
+      lineHeight: "1.6",
+    },
+
     // Mode Select
-    modeSelect: { padding: "6px 12px", borderRadius: "6px", border: "1px solid #475569", background: "#1e293b", color: "white", fontWeight: "bold", cursor: "pointer" },
-    
+    modeSelect: {
+      padding: "6px 12px",
+      borderRadius: "6px",
+      border: "1px solid #475569",
+      background: "#1e293b",
+      color: "white",
+      fontWeight: "bold",
+      cursor: "pointer",
+    },
+
     // Status Select
-    statusSelect: { padding: "4px 8px", borderRadius: "4px", border: "1px solid #cbd5e1", fontSize: "0.75rem", color: "#475569", cursor: "pointer", background: "white" }
+    statusSelect: {
+      padding: "4px 8px",
+      borderRadius: "4px",
+      border: "1px solid #cbd5e1",
+      fontSize: "0.75rem",
+      color: "#475569",
+      cursor: "pointer",
+      background: "white",
+    },
   };
 
   // --- RENDER ---
@@ -329,158 +580,370 @@ export default function Dashboard() {
 
       {/* HEADER */}
       <header style={styles.header}>
-        <div style={{display:'flex', alignItems:'center', gap:'12px'}}>
-          <span style={{fontSize:'1.5rem'}}>🚄</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <span style={{ fontSize: "1.5rem" }}>🚄</span>
           <div>
-            <h1 style={{fontSize:'1.2rem', fontWeight:'700'}}>RailGuard Command</h1>
-            <div style={{fontSize:'0.75rem', opacity:0.8}}>Professional Operator Interface</div>
+            <h1 style={{ fontSize: "1.2rem", fontWeight: "700" }}>
+              RailGuard Command
+            </h1>
+            <div style={{ fontSize: "0.75rem", opacity: 0.8 }}>
+              Professional Operator Interface
+            </div>
           </div>
         </div>
-        
-        {/* MODE SWITCHER */}
-        <div style={{display:'flex', alignItems:'center', gap:'20px'}}>
-            <select style={styles.modeSelect} value={mode} onChange={(e) => setMode(e.target.value)}>
-                <option value="LIVE">LIVE SENSORS</option>
-                <option value="TEST">TEST MODE (SIM)</option>
-            </select>
 
-            <div style={styles.statusBadge}>
-                <div className="status-dot" style={{background: mode==='LIVE'?'#4ade80':'#f59e0b'}}></div>
-                <span style={{fontSize:'0.8rem', color: mode==='LIVE'?'#4ade80':'#f59e0b', fontWeight:'600'}}>
-                    {mode === 'LIVE' ? 'SYSTEM ACTIVE' : 'SIMULATION'}
-                </span>
-            </div>
+        {/* MODE SWITCHER */}
+        <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+          <select
+            style={styles.modeSelect}
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+          >
+            <option value="LIVE">LIVE SENSORS</option>
+            <option value="TEST">TEST MODE (SIM)</option>
+          </select>
+
+          <div style={styles.statusBadge}>
+            <div
+              className="status-dot"
+              style={{ background: mode === "LIVE" ? "#4ade80" : "#f59e0b" }}
+            ></div>
+            <span
+              style={{
+                fontSize: "0.8rem",
+                color: mode === "LIVE" ? "#4ade80" : "#f59e0b",
+                fontWeight: "600",
+              }}
+            >
+              {mode === "LIVE" ? "SYSTEM ACTIVE" : "SIMULATION"}
+            </span>
+          </div>
         </div>
       </header>
 
       {/* BODY */}
       <div style={styles.body}>
-        
         {/* LEFT: MAP */}
         <div style={styles.leftPanel}>
-          <MapContainer center={[28.6139, 77.209]} zoom={13} zoomControl={false} style={{height: '100%'}}>
+          <MapContainer
+            center={[28.6139, 77.209]}
+            zoom={13}
+            zoomControl={false}
+            style={{ height: "100%" }}
+          >
             <TileLayer
               url="https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png"
-              attribution='&copy; OpenRailwayMap'
+              attribution="&copy; OpenRailwayMap"
               maxZoom={19}
             />
             {filteredAlerts.map((alert) => (
-              <Marker key={`alert-${alert.id}`} position={[alert.lat || 0, alert.lng || 0]} icon={icons.red}>
+              <Marker
+                key={`alert-${alert.id}`}
+                position={[alert.lat || 0, alert.lng || 0]}
+                icon={icons.red}
+              >
                 <Popup>
-                  <div style={{fontFamily:'Inter, sans-serif'}}>
-                    <b style={{color:'#ef4444'}}>🚨 ALERT</b><br/>
-                    Node: {alert.nodeId}<br/>
-                    Severity: {alert.severity}<br/>
-                    <hr style={{margin:'8px 0', borderTop:'1px solid #e2e8f0'}}/>
-                    
+                  <div style={{ fontFamily: "Inter, sans-serif" }}>
+                    <b style={{ color: "#ef4444" }}>🚨 ALERT</b>
+                    <br />
+                    Node: {alert.nodeId}
+                    <br />
+                    Severity: {alert.severity}
+                    <br />
+                    <hr
+                      style={{
+                        margin: "8px 0",
+                        borderTop: "1px solid #e2e8f0",
+                      }}
+                    />
                     {/* POPUP DROPDOWN ACTIONS */}
-                    {alert.status === 'CONSTRUCTION' ? (
-                        <div style={{background:'#fef3c7', padding:'5px', borderRadius:'4px', color:'#92400e', fontSize:'0.75rem', textAlign:'center'}}>
-                            🚧 Construction Verified
-                        </div>
-                    ) : alert.status === 'CLOSED' ? (
-                        <div style={{background:'#dcfce7', padding:'5px', borderRadius:'4px', color:'#166534', fontSize:'0.75rem', textAlign:'center'}}>
-                            ✅ Resolved / Closed
-                        </div>
+                    {alert.status === "CONSTRUCTION" ? (
+                      <div
+                        style={{
+                          background: "#fef3c7",
+                          padding: "5px",
+                          borderRadius: "4px",
+                          color: "#92400e",
+                          fontSize: "0.75rem",
+                          textAlign: "center",
+                        }}
+                      >
+                        🚧 Construction Verified
+                      </div>
+                    ) : alert.status === "CLOSED" ? (
+                      <div
+                        style={{
+                          background: "#dcfce7",
+                          padding: "5px",
+                          borderRadius: "4px",
+                          color: "#166534",
+                          fontSize: "0.75rem",
+                          textAlign: "center",
+                        }}
+                      >
+                        ✅ Resolved / Closed
+                      </div>
                     ) : (
-                        <div style={{display:'flex', flexDirection:'column', gap:'5px'}}>
-                            <label style={{fontSize:'0.7rem', color:'#64748b'}}>Take Action:</label>
-                            <select 
-                                style={{padding:'5px', borderRadius:'4px', border:'1px solid #cbd5e1', cursor:'pointer'}}
-                                onChange={(e) => handleResolutionChange(alert.id, e.target.value)}
-                                defaultValue=""
-                            >
-                                <option value="" disabled>Select Action...</option>
-                                <option value="CONSTRUCTION">🚧 Verify Construction</option>
-                                <option value="CLOSED">✅ Close / False Alarm</option>
-                            </select>
-                        </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "5px",
+                        }}
+                      >
+                        <label style={{ fontSize: "0.7rem", color: "#64748b" }}>
+                          Take Action:
+                        </label>
+                        <select
+                          style={{
+                            padding: "5px",
+                            borderRadius: "4px",
+                            border: "1px solid #cbd5e1",
+                            cursor: "pointer",
+                          }}
+                          onChange={(e) =>
+                            handleResolutionChange(alert.id, e.target.value)
+                          }
+                          defaultValue=""
+                        >
+                          <option value="" disabled>
+                            Select Action...
+                          </option>
+                          <option value="CONSTRUCTION">
+                            🚧 Verify Construction
+                          </option>
+                          <option value="CLOSED">✅ Close / False Alarm</option>
+                        </select>
+                      </div>
                     )}
                   </div>
                 </Popup>
               </Marker>
             ))}
             {Object.entries(nodes).map(([id, node]) => (
-              <Marker key={id} position={[node.lat || 0, node.lng || 0]} icon={icons[node.status] || icons.green} eventHandlers={{ click: () => setSelectedNode(id) }} />
+              <Marker
+                key={id}
+                position={[node.lat || 0, node.lng || 0]}
+                icon={icons[node.status] || icons.green}
+                eventHandlers={{ click: () => setSelectedNode(id) }}
+              />
             ))}
           </MapContainer>
         </div>
 
         {/* RIGHT: DATA */}
         <div style={styles.rightPanel}>
-          
           {/* 1. KPI CARDS */}
           <div style={styles.kpiRow}>
             <div style={styles.kpiCard}>
-                <div style={styles.kpiLabel}>System Uptime</div>
-                <div style={styles.kpiValue} style={{color: '#16a34a'}}>99.98%</div>
+              <div style={styles.kpiLabel}>System Uptime</div>
+              <div style={styles.kpiValue} style={{ color: "#16a34a" }}>
+                99.98%
+              </div>
             </div>
             <div style={styles.kpiCard}>
-                <div style={styles.kpiLabel}>Active Nodes</div>
-                <div style={styles.kpiValue} style={{color: '#3b82f6'}}>{Object.keys(nodes).length} / {Object.keys(nodes).length + 2}</div>
+              <div style={styles.kpiLabel}>Active Nodes</div>
+              <div style={styles.kpiValue} style={{ color: "#3b82f6" }}>
+                {Object.keys(nodes).length} / {Object.keys(nodes).length + 2}
+              </div>
             </div>
             <div style={styles.kpiCard}>
-                <div style={styles.kpiLabel}>Avg Vibration</div>
-                <div style={styles.kpiValue}>0.04g</div>
+              <div style={styles.kpiLabel}>Avg Vibration</div>
+              <div style={styles.kpiValue}>0.04g</div>
             </div>
           </div>
 
           {/* 2. ALERTS */}
           <div style={styles.alertSection}>
             <div style={styles.alertHeader}>
-              <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
-                <span style={{fontWeight:'600'}}>Incident Feed</span>
-                <span style={{background:'#fee2e2', color:'#ef4444', fontSize:'0.7rem', padding:'2px 8px', borderRadius:'10px', fontWeight:'700'}}>{filteredAlerts.length} Active</span>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "10px" }}
+              >
+                <span style={{ fontWeight: "600" }}>Incident Feed</span>
+                <span
+                  style={{
+                    background: "#fee2e2",
+                    color: "#ef4444",
+                    fontSize: "0.7rem",
+                    padding: "2px 8px",
+                    borderRadius: "10px",
+                    fontWeight: "700",
+                  }}
+                >
+                  {filteredAlerts.length} Active
+                </span>
               </div>
               {/* FILTER PILLS */}
               <div>
-                  {['ALL', 'HIGH', 'CONSTRUCTION', 'CLOSED'].map(filter => (
-                      <button key={filter} style={styles.filterPill(filterStatus === filter)} onClick={() => setFilterStatus(filter)}>
-                          {filter}
-                      </button>
-                  ))}
+                {["ALL", "HIGH", "CONSTRUCTION", "CLOSED"].map((filter) => (
+                  <button
+                    key={filter}
+                    style={styles.filterPill(filterStatus === filter)}
+                    onClick={() => setFilterStatus(filter)}
+                  >
+                    {filter}
+                  </button>
+                ))}
               </div>
             </div>
-            <div style={{flex:1, overflowY:'auto'}}>
-              <table style={{width:'100%', borderCollapse:'collapse'}}>
-                <thead style={{background:'#f8fafc', position:'sticky', top:0}}>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead
+                  style={{
+                    background: "#f8fafc",
+                    position: "sticky",
+                    top: 0,
+                  }}
+                >
                   <tr>
-                    <th style={{textAlign:'left', padding:'10px 15px', fontSize:'0.75rem', color:'#64748b'}}>TIME</th>
-                    <th style={{textAlign:'left', padding:'10px 15px', fontSize:'0.75rem', color:'#64748b'}}>NODE</th>
-                    <th style={{textAlign:'left', padding:'10px 15px', fontSize:'0.75rem', color:'#64748b'}}>LOC</th>
-                    <th style={{textAlign:'left', padding:'10px 15px', fontSize:'0.75rem', color:'#64748b'}}>SEVERITY</th>
-                    <th style={{textAlign:'right', padding:'10px 15px', fontSize:'0.75rem', color:'#64748b'}}>ACTION</th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "10px 15px",
+                        fontSize: "0.75rem",
+                        color: "#64748b",
+                      }}
+                    >
+                      TIME
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "10px 15px",
+                        fontSize: "0.75rem",
+                        color: "#64748b",
+                      }}
+                    >
+                      NODE
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "10px 15px",
+                        fontSize: "0.75rem",
+                        color: "#64748b",
+                      }}
+                    >
+                      LOC
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "10px 15px",
+                        fontSize: "0.75rem",
+                        color: "#64748b",
+                      }}
+                    >
+                      SEVERITY
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        padding: "10px 15px",
+                        fontSize: "0.75rem",
+                        color: "#64748b",
+                      }}
+                    >
+                      ACTION
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredAlerts.map((alert, idx) => (
-                    <tr key={idx} style={{borderBottom:'1px solid #f1f5f9', background: alert.status === 'CONSTRUCTION' ? '#fffbeb' : alert.status === 'CLOSED' ? '#f0fdf4' : 'white'}}>
-                      <td style={{padding:'10px 15px', fontSize:'0.8rem'}}>{new Date(alert.timestamp).toLocaleTimeString()}</td>
-                      <td style={{padding:'10px 15px', fontSize:'0.8rem', fontWeight:'600'}}>{alert.nodeId}</td>
-                      <td style={{padding:'10px 15px', fontSize:'0.75rem', fontFamily:'monospace', color:'#64748b'}}>{Number(alert.lat).toFixed(3)}, {Number(alert.lng).toFixed(3)}</td>
-                      <td style={{padding:'10px 15px'}}>
-                        <span style={{padding:'2px 8px', borderRadius:'10px', fontSize:'0.7rem', fontWeight:'bold', background: alert.severity==='HIGH'?'#fee2e2':'#fef9c3', color: alert.severity==='HIGH'?'#991b1b':'#854d0e'}}>
-                            {alert.severity}
+                    <tr
+                      key={idx}
+                      style={{
+                        borderBottom: "1px solid #f1f5f9",
+                        background:
+                          alert.status === "CONSTRUCTION"
+                            ? "#fffbeb"
+                            : alert.status === "CLOSED"
+                            ? "#f0fdf4"
+                            : "white",
+                      }}
+                    >
+                      <td style={{ padding: "10px 15px", fontSize: "0.8rem" }}>
+                        {new Date(alert.timestamp).toLocaleTimeString()}
+                      </td>
+                      <td
+                        style={{
+                          padding: "10px 15px",
+                          fontSize: "0.8rem",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {alert.nodeId}
+                      </td>
+                      <td
+                        style={{
+                          padding: "10px 15px",
+                          fontSize: "0.75rem",
+                          fontFamily: "monospace",
+                          color: "#64748b",
+                        }}
+                      >
+                        {Number(alert.lat).toFixed(3)},{" "}
+                        {Number(alert.lng).toFixed(3)}
+                      </td>
+                      <td style={{ padding: "10px 15px" }}>
+                        <span
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: "10px",
+                            fontSize: "0.7rem",
+                            fontWeight: "bold",
+                            background:
+                              alert.severity === "HIGH" ? "#fee2e2" : "#fef9c3",
+                            color:
+                              alert.severity === "HIGH" ? "#991b1b" : "#854d0e",
+                          }}
+                        >
+                          {alert.severity}
                         </span>
                       </td>
-                      <td style={{padding:'10px 15px', textAlign:'right'}}>
-                        {alert.status === 'CONSTRUCTION' ? (
-                            <span style={{fontSize:'0.75rem', color:'#b45309'}}>🚧 Verified</span>
-                        ) : alert.status === 'CLOSED' ? (
-                            <span style={{fontSize:'0.75rem', color:'#15803d'}}>✅ Closed</span>
+                      <td style={{ padding: "10px 15px", textAlign: "right" }}>
+                        {alert.status === "CONSTRUCTION" ? (
+                          <span
+                            style={{ fontSize: "0.75rem", color: "#b45309" }}
+                          >
+                            🚧 Verified
+                          </span>
+                        ) : alert.status === "CLOSED" ? (
+                          <span
+                            style={{ fontSize: "0.75rem", color: "#15803d" }}
+                          >
+                            ✅ Closed
+                          </span>
                         ) : (
-                            <div style={{display:'flex', justifyContent:'flex-end', gap:'5px'}}>
-                                <select 
-                                    style={styles.statusSelect}
-                                    onChange={(e) => handleResolutionChange(alert.id, e.target.value)}
-                                    defaultValue=""
-                                >
-                                    <option value="" disabled>Action ▼</option>
-                                    <option value="CONSTRUCTION">🚧 Verify Construction</option>
-                                    <option value="CLOSED">✅ Close Alert</option>
-                                </select>
-                                <button className="btn-action btn-dispatch" onClick={() => handleDispatch(alert.id)}>Dispatch</button>
-                            </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "flex-end",
+                              gap: "5px",
+                            }}
+                          >
+                            <select
+                              style={styles.statusSelect}
+                              onChange={(e) =>
+                                handleResolutionChange(alert.id, e.target.value)
+                              }
+                              defaultValue=""
+                            >
+                              <option value="" disabled>
+                                Action ▼
+                              </option>
+                              <option value="CONSTRUCTION">
+                                🚧 Verify Construction
+                              </option>
+                              <option value="CLOSED">✅ Close Alert</option>
+                            </select>
+                            <button
+                              className="btn-action btn-dispatch"
+                              onClick={() => handleDispatch(alert.id)}
+                            >
+                              Dispatch
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -493,104 +956,297 @@ export default function Dashboard() {
           {/* 3. TABS & GRAPHS */}
           <div style={styles.graphSection}>
             <div style={styles.tabHeader}>
-                <span style={styles.tab(activeTab === 'telemetry')} onClick={() => setActiveTab('telemetry')}>Telemetry</span>
-                <span style={styles.tab(activeTab === 'health')} onClick={() => setActiveTab('health')}>Node Health</span>
-                
-                {/* REPLAY CONTROLS */}
-                <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:'10px'}}>
-                    <span style={{fontSize:'0.7rem', color:'#64748b'}}>REPLAY MODE:</span>
-                    <input type="checkbox" checked={replayMode} onChange={(e) => setReplayMode(e.target.checked)} />
-                    {replayMode && (
-                        <input type="range" min="0" max="100" value={replayIndex} onChange={(e) => setReplayIndex(e.target.value)} style={{width:'100px'}} />
-                    )}
-                </div>
+              <span
+                style={styles.tab(activeTab === "telemetry")}
+                onClick={() => setActiveTab("telemetry")}
+              >
+                Telemetry
+              </span>
+              <span
+                style={styles.tab(activeTab === "health")}
+                onClick={() => setActiveTab("health")}
+              >
+                Node Health
+              </span>
+
+              {/* REPLAY CONTROLS */}
+              <div
+                style={{
+                  marginLeft: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                }}
+              >
+                <span style={{ fontSize: "0.7rem", color: "#64748b" }}>
+                  REPLAY MODE:
+                </span>
+                <input
+                  type="checkbox"
+                  checked={replayMode}
+                  onChange={(e) => setReplayMode(e.target.checked)}
+                />
+                {replayMode && (
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={replayIndex}
+                    onChange={(e) => setReplayIndex(e.target.value)}
+                    style={{ width: "100px" }}
+                  />
+                )}
+              </div>
             </div>
 
-            {activeTab === 'telemetry' ? (
-                <div style={styles.gridContainer}>
-                    <div style={styles.chartCard}>
-                        <div style={{fontSize:'0.75rem', fontWeight:'700', color:'#64748b', marginBottom:'10px'}}>VIBRATION</div>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={displayTelemetry}>
-                                <CartesianGrid stroke="#f1f5f9" />
-                                <XAxis dataKey="time" hide />
-                                <YAxis width={30} tick={{fontSize:10}} />
-                                <Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px rgba(0,0,0,0.1)'}}/>
-                                <Line type="monotone" dataKey="accel_mag" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
-                            </LineChart>
-                        </ResponsiveContainer>
-                    </div>
-                    <div style={styles.chartCard}>
-                        <div style={{fontSize:'0.75rem', fontWeight:'700', color:'#64748b', marginBottom:'10px'}}>MAGNETIC (µT)</div>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={displayTelemetry}>
-                                <CartesianGrid stroke="#f1f5f9" />
-                                <XAxis dataKey="time" hide />
-                                <YAxis width={30} tick={{fontSize:10}} domain={['auto','auto']} />
-                                <Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px rgba(0,0,0,0.1)'}}/>
-                                <Line type="monotone" dataKey="mag_norm" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
-                            </LineChart>
-                        </ResponsiveContainer>
-                    </div>
+            {activeTab === "telemetry" ? (
+              <div style={styles.gridContainer}>
+                <div style={styles.chartCard}>
+                  <div
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: "700",
+                      color: "#64748b",
+                      marginBottom: "10px",
+                    }}
+                  >
+                    VIBRATION
+                  </div>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={displayTelemetry}>
+                      <CartesianGrid stroke="#f1f5f9" />
+                      <XAxis dataKey="time" hide />
+                      <YAxis width={30} tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: "8px",
+                          border: "none",
+                          boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+                        }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="accel_mag"
+                        stroke="#6366f1"
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
+                <div style={styles.chartCard}>
+                  <div
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: "700",
+                      color: "#64748b",
+                      marginBottom: "10px",
+                    }}
+                  >
+                    MAGNETIC (µT)
+                  </div>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={displayTelemetry}>
+                      <CartesianGrid stroke="#f1f5f9" />
+                      <XAxis dataKey="time" hide />
+                      <YAxis
+                        width={30}
+                        tick={{ fontSize: 10 }}
+                        domain={["auto", "auto"]}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: "8px",
+                          border: "none",
+                          boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+                        }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="mag_norm"
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             ) : (
-                // HEALTH TAB VISUALS
-                <div style={styles.gridContainer}>
-                    <div style={styles.chartCard}>
-                        <div style={{fontSize:'0.75rem', fontWeight:'700', color:'#64748b', marginBottom:'10px'}}>TRACK STRESS (TEMP)</div>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={[latestEnv]} layout="vertical">
-                                <CartesianGrid stroke="#f1f5f9" horizontal={false} />
-                                <XAxis type="number" domain={[0, 60]} hide />
-                                <YAxis type="category" dataKey="temperature" width={1} hide />
-                                <Tooltip cursor={{fill:'transparent'}} />
-                                <Bar dataKey="temperature" barSize={40} radius={[0,4,4,0]}>
-                                    { [latestEnv].map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.temperature > 45 ? '#ef4444' : '#22c55e'} />
-                                    )) }
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                        <div style={{textAlign:'center', marginTop:'10px', fontSize:'0.9rem'}}>
-                            Current: <b>{latestEnv.temperature?.toFixed(1)}°C</b> <span style={{color:'#64748b'}}>(Crit: 45°C)</span>
-                        </div>
-                    </div>
-                    <div style={styles.chartCard}>
-                        <div style={{fontSize:'0.75rem', fontWeight:'700', color:'#64748b', marginBottom:'10px'}}>NODE STATUS</div>
-                        <div style={{display:'flex', flexDirection:'column', gap:'15px', marginTop:'10px'}}>
-                            <div>
-                                <div style={{fontSize:'0.8rem', color:'#475569', marginBottom:'5px'}}>Battery Level</div>
-                                <div style={{width:'100%', height:'10px', background:'#e2e8f0', borderRadius:'5px'}}>
-                                    <div style={{width: `${currentNode?.battery || 85}%`, height:'100%', background:'#22c55e', borderRadius:'5px'}}></div>
-                                </div>
-                            </div>
-                            <div>
-                                <div style={{fontSize:'0.8rem', color:'#475569', marginBottom:'5px'}}>Signal Strength (RSSI)</div>
-                                <div style={{width:'100%', height:'10px', background:'#e2e8f0', borderRadius:'5px'}}>
-                                    <div style={{width: '70%', height:'100%', background:'#3b82f6', borderRadius:'5px'}}></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+              // HEALTH TAB VISUALS
+              <div style={styles.gridContainer}>
+                <div style={styles.chartCard}>
+                  <div
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: "700",
+                      color: "#64748b",
+                      marginBottom: "10px",
+                    }}
+                  >
+                    TRACK STRESS (TEMP)
+                  </div>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={[latestEnv]} layout="vertical">
+                      <CartesianGrid stroke="#f1f5f9" horizontal={false} />
+                      <XAxis type="number" domain={[0, 60]} hide />
+                      <YAxis
+                        type="category"
+                        dataKey="temperature"
+                        width={1}
+                        hide
+                      />
+                      <Tooltip cursor={{ fill: "transparent" }} />
+                      <Bar
+                        dataKey="temperature"
+                        barSize={40}
+                        radius={[0, 4, 4, 0]}
+                      >
+                        {[latestEnv].map((entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={
+                              entry.temperature > 45 ? "#ef4444" : "#22c55e"
+                            }
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      marginTop: "10px",
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    Current: <b>{latestEnv.temperature?.toFixed(1)}°C</b>{" "}
+                    <span style={{ color: "#64748b" }}>(Crit: 45°C)</span>
+                  </div>
                 </div>
+                <div style={styles.chartCard}>
+                  <div
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: "700",
+                      color: "#64748b",
+                      marginBottom: "10px",
+                    }}
+                  >
+                    NODE STATUS
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "15px",
+                      marginTop: "10px",
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          fontSize: "0.8rem",
+                          color: "#475569",
+                          marginBottom: "5px",
+                        }}
+                      >
+                        Battery Level
+                      </div>
+                      <div
+                        style={{
+                          width: "100%",
+                          height: "10px",
+                          background: "#e2e8f0",
+                          borderRadius: "5px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${currentNode?.battery || 85}%`,
+                            height: "100%",
+                            background: "#22c55e",
+                            borderRadius: "5px",
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        style={{
+                          fontSize: "0.8rem",
+                          color: "#475569",
+                          marginBottom: "5px",
+                        }}
+                      >
+                        Signal Strength (RSSI)
+                      </div>
+                      <div
+                        style={{
+                          width: "100%",
+                          height: "10px",
+                          background: "#e2e8f0",
+                          borderRadius: "5px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "70%",
+                            height: "100%",
+                            background: "#3b82f6",
+                            borderRadius: "5px",
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
-
           </div>
         </div>
       </div>
 
       {/* FOOTER */}
       <footer style={styles.footer}>
-        <div style={{padding:'5px 15px', background:'#1e293b', fontSize:'0.75rem', fontWeight:'bold', color:'#94a3b8', borderBottom:'1px solid #334155'}}>
-            >_ SYSTEM CONSOLE <span style={{float:'right', color:'#4ade80'}}>● ONLINE</span>
+        <div
+          style={{
+            padding: "5px 15px",
+            background: "#1e293b",
+            fontSize: "0.75rem",
+            fontWeight: "bold",
+            color: "#94a3b8",
+            borderBottom: "1px solid #334155",
+          }}
+        >
+          {">"}_ SYSTEM CONSOLE{" "}
+          <span style={{ float: "right", color: "#4ade80" }}>● ONLINE</span>
         </div>
         <div style={styles.consoleBody} className="console-logs">
-            {systemLogs.map((log) => (
-                <div key={log.id} style={{marginBottom:'4px', display:'flex', gap:'10px'}}>
-                    <span style={{color:'#64748b'}}>[{log.time}]</span>
-                    <span style={{color: log.type==='error'?'#ef4444':log.type==='warning'?'#f59e0b':log.type==='success'?'#4ade80':'#e2e8f0'}}>{log.msg}</span>
-                </div>
-            ))}
+          {systemLogs.map((log) => (
+            <div
+              key={log.id}
+              style={{ marginBottom: "4px", display: "flex", gap: "10px" }}
+            >
+              <span style={{ color: "#64748b" }}>[{log.time}]</span>
+              <span
+                style={{
+                  color:
+                    log.type === "error"
+                      ? "#ef4444"
+                      : log.type === "warning"
+                      ? "#f59e0b"
+                      : log.type === "success"
+                      ? "#4ade80"
+                      : "#e2e8f0",
+                }}
+              >
+                {log.msg}
+              </span>
+            </div>
+          ))}
         </div>
       </footer>
     </div>
