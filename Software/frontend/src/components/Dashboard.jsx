@@ -9,31 +9,17 @@ import io from "socket.io-client";
 import axios from "axios";
 import "leaflet/dist/leaflet.css";
 
-// --- FIX: ROBUST SVG ICONS (Replaces broken Image URLs) ---
-const getIcon = (colorName) => {
-  const colors = {
-    green: '#22c55e',  // Success
-    yellow: '#eab308', // Warning
-    red: '#ef4444',    // Danger
-    grey: '#64748b'    // Inactive
-  };
-  const hex = colors[colorName] || colors.grey;
-
-  return new L.DivIcon({
-    className: 'custom-marker',
-    html: `
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${hex}" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); width: 36px; height: 36px;">
-        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
-        <circle cx="12" cy="10" r="3" fill="#ffffff"></circle>
-      </svg>
-    `,
-    iconSize: [36, 36],
-    iconAnchor: [18, 36], // Point of the pin touches the location
-    popupAnchor: [0, -36] // Popup opens above the pin
+// --- ICONS & ASSETS ---
+const getIcon = (color) =>
+  new L.Icon({
+    iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/markers-default/${color}-marker.png`,
+    shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41],
   });
-};
 
-// Pre-define icons to prevent re-creation on render
 const icons = {
   green: getIcon("green"),
   yellow: getIcon("yellow"),
@@ -41,6 +27,7 @@ const icons = {
   grey: getIcon("grey"),
 };
 
+// Initialize socket outside component to prevent multiple connections
 const socket = io("http://localhost:3000", { autoConnect: false });
 const API_URL = "http://localhost:3000/api/alerts";
 
@@ -89,6 +76,15 @@ export default function Dashboard() {
         });
 
         socket.on("new_alert", (newAlert) => {
+            // --- 🔊 AUDIO ALERT ---
+            try {
+                const audio = new Audio('/alert.mp3');
+                audio.play().catch(e => console.log("Audio play failed (browser policy):", e));
+            } catch (err) {
+                console.error("Audio error", err);
+            }
+            // -----------------------
+
             setAlerts((prev) => [newAlert, ...prev]); 
             setNodes((prev) => ({
                 ...prev,
@@ -144,6 +140,15 @@ export default function Dashboard() {
         updateNodesAndTelemetry(fakeData);
 
         if (Math.random() > 0.98) {
+            // --- 🔊 AUDIO ALERT (TEST MODE) ---
+            try {
+                const audio = new Audio('/alert.mp3');
+                audio.play().catch(e => console.log("Audio play failed (browser policy):", e));
+            } catch (err) {
+                console.error("Audio error", err);
+            }
+            // ----------------------------------
+
             const fakeAlert = {
                 id: timestamp,
                 timestamp: timestamp,

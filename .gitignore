@@ -12,3 +12,6 @@ venv/
 
 # OS
 .DS_Store
+
+# backend/node-server/.env
+backend/node-server/.env
