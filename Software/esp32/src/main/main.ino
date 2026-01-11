@@ -190,8 +190,7 @@ void loop() {
   doc["mag_norm"] = mag_norm;
   doc["mic_level"] = mic_noise_level;
 
-  // --- CONSTANT ENVIRONMENT DATA ---
-  // Hardcoded values so AI/DB receives consistent data
+  // Constant Environment Data
   doc["temperature"] = 25.0; 
   doc["humidity"] = 50.0;
   doc["pressure"] = 1013.25;
@@ -202,8 +201,15 @@ void loop() {
 
   client.publish("railway/sensor/1", buffer, n);
 
-  Serial.print("Sent -> Ax:"); Serial.print(ax);
-  Serial.print(" | Tilt:"); Serial.println(tilt_val);
+  // --- DEBUG PRINT: All Raw Values ---
+  Serial.print("Ax:"); Serial.print(ax, 2);
+  Serial.print(" Ay:"); Serial.print(ay, 2);
+  Serial.print(" Az:"); Serial.print(az, 2);
+  Serial.print(" | Mx:"); Serial.print(mx, 0);
+  Serial.print(" My:"); Serial.print(my, 0);
+  Serial.print(" Mz:"); Serial.print(mz, 0);
+  Serial.print(" | Tilt:"); Serial.print(tilt_val);
+  Serial.print(" | Mic:"); Serial.println(mic_noise_level, 1);
 
   delay(500); // 2Hz Transmission
 }
