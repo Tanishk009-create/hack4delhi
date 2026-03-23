@@ -2,7 +2,7 @@
 
   <img src="https://wp.logos-download.com/wp-content/uploads/2019/11/Indian_Railway_Logo_2.png?dl" alt="Indian Railways" width="100" />
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="https://www.wirecable.in/wp-content/uploads/2023/07/GOI.jpg" alt="GOI" width="120" />
+  <img src="https://www.wirecable.in/wp-content/uploads/2023/07/GOI.jpg" alt="GOI" width="200" />
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <img src="https://media.assettype.com/thequint%2F2016-01%2F5fe4b302-c270-4b8a-8c02-db7cf3ef93ed%2FMake-in-India.jpg?rect=0%2C0%2C1820%2C1024&auto=format%2Ccompress&fmt=webp&width=720" alt="Make in India" width="120" />
 
