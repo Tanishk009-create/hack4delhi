@@ -1,3 +1,5 @@
+require('dotenv').config(); // <--- ADD THIS LINE
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -8,7 +10,8 @@ const dataController = require('./controllers/dataController');
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json()); 
+app.use(bodyParser.json({ limit: '50mb' })); // <--- UPDATED
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true })); // <--- ADDED
 
 const server = http.createServer(app);
 // Initialize Socket.io (Must be done before MQTT)
@@ -62,6 +65,69 @@ const mqttClient = connectMQTT((data) => {
         
         // 3. Broadcast FULL alert object to Frontend
         io.emit('new_alert', broadcastPacket);
+    }
+});
+
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// Create the Vision Endpoint
+app.post('/api/vision', async (req, res) => {
+    const { alert_id, image_base64 } = req.body;
+
+    try {
+        // 1. Strip the data URL prefix (e.g., "data:image/jpeg;base64,")
+        const base64Data = image_base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
+
+        // 2. Setup the Gemini 2.5 Flash model (Current Gen)
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-2.5-flash", // <--- THE FIX
+            generationConfig: { responseMimeType: "application/json" } 
+        });
+
+        // 3. The Prompt Engineering (Crucial for accuracy)
+        const prompt = `
+        You are a highly secure railway monitoring AI. Analyze this image of a railway track.
+        Determine if there is any evidence of tampering, sabotage, or unauthorized presence.
+        Look for:
+        - People standing on or dangerously close to the tracks.
+        - Heavy tools (wrenches, hammers, saws, grinders) left on the tracks.
+        - Missing fishplates, removed bolts, or cut rails.
+        
+        Respond ONLY with a JSON object in this exact format:
+        {
+            "confirmed": true/false,
+            "confidence": <number between 0 and 100>,
+            "reason": "<A brief, 1-sentence explanation of what you see>"
+        }`;
+
+        const imagePart = {
+            inlineData: {
+                data: base64Data,
+                mimeType: "image/jpeg"
+            }
+        };
+
+        // 4. Send to Gemini
+        const result = await model.generateContent([prompt, imagePart]);
+        const responseText = result.response.text();
+        
+        // 5. Parse and Return
+        const aiVerdict = JSON.parse(responseText);
+        
+        res.json({
+            status: "success",
+            alert_id: alert_id,
+            visual_confirmation: aiVerdict.confirmed,
+            confidence: aiVerdict.confidence,
+            reason: aiVerdict.reason
+        });
+
+    } catch (error) {
+        console.error("VLM Error:", error);
+        res.status(500).json({ status: "error", message: "Vision analysis failed" });
     }
 });
 

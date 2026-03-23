@@ -10,8 +10,8 @@ import axios from "axios";
 import "leaflet/dist/leaflet.css";
 
 // --- IMPORT YOUR LOCAL LOGOS HERE ---
-import IRLogo from "../assets/IRLogo.png"; 
-import MakeInIndiaLogo from "../assets/MakeInIndiaLogo.jpeg"; 
+import IRLogo from "../assets/IRLogo.png";
+import MakeInIndiaLogo from "../assets/MakeInIndiaLogo.jpeg";
 
 // Fallback Emblem (Online)
 const LOGO_EMBLEM = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Emblem_of_India.svg/240px-Emblem_of_India.svg.png";
@@ -21,8 +21,7 @@ const getIcon = (color) =>
   new L.DivIcon({
     className: "custom-marker",
     html: `
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${
-        color === "green" ? "#10b981" : color === "yellow" ? "#f59e0b" : color === "red" ? "#ef4444" : "#64748b"
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color === "green" ? "#10b981" : color === "yellow" ? "#f59e0b" : color === "red" ? "#ef4444" : "#64748b"
       }" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 4px 6px rgba(0,0,0,0.4)); width: 42px; height: 42px; transition: transform 0.2s;">
         <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
         <circle cx="12" cy="10" r="3" fill="#ffffff"></circle>
@@ -41,14 +40,14 @@ const icons = {
 };
 
 // --- SOCKET CONFIGURATION ---
-const SOCKET_URL = "http://localhost:3000"; 
+const SOCKET_URL = "http://localhost:3000";
 const API_URL = "http://localhost:3000/api/alerts";
 
-const socket = io(SOCKET_URL, { 
-    autoConnect: false,
-    reconnection: true,
-    reconnectionAttempts: 20,
-    reconnectionDelay: 1000
+const socket = io(SOCKET_URL, {
+  autoConnect: false,
+  reconnection: true,
+  reconnectionAttempts: 20,
+  reconnectionDelay: 1000
 });
 
 // --- STATION COORDINATES (New Delhi Railway Station) ---
@@ -57,12 +56,18 @@ const STATION_LNG = 77.2207;
 
 export default function Dashboard() {
   // --- STATE ---
-  const [mode, setMode] = useState("LIVE"); 
+  const [mode, setMode] = useState("LIVE");
   const [nodes, setNodes] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [telemetry, setTelemetry] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
   const [lastHeartbeat, setLastHeartbeat] = useState(Date.now());
+
+  // --- VISION STATE & REFS ---
+  const [cameraActive, setCameraActive] = useState(false);
+  const [visionVerdict, setVisionVerdict] = useState(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
 
   // UX State
   const [activeTab, setActiveTab] = useState("telemetry");
@@ -92,7 +97,7 @@ export default function Dashboard() {
     if (mode === "LIVE") {
       if (!socket.connected) socket.connect();
       fetchAlerts();
-      
+
       socket.on("connect", () => addLog("Connected to Backend Stream", "success"));
       socket.on("disconnect", () => addLog("Disconnected from Backend", "error"));
       socket.on("reconnect", () => addLog("Connection Restored", "success"));
@@ -106,8 +111,8 @@ export default function Dashboard() {
             lng: data.lng || data.longitude || STATION_LNG,
             lastSeen: data.timestamp,
             status: prev[data.node_id]?.status === 'red' ? 'red' : 'green',
-            battery: 98, 
-            rssi: -45,   
+            battery: 98,
+            rssi: -45,
           },
         }));
 
@@ -137,17 +142,17 @@ export default function Dashboard() {
         } catch (err) { console.error(err); }
 
         const normalizedAlert = {
-            ...newAlert,
-            id: newAlert.id || Date.now(),
-            nodeId: newAlert.nodeId || newAlert.node_id || "UNKNOWN",
-            lat: newAlert.lat || newAlert.latitude || STATION_LAT,
-            lng: newAlert.lng || newAlert.longitude || STATION_LNG,
-            status: newAlert.status || 'OPEN'
+          ...newAlert,
+          id: newAlert.id || Date.now(),
+          nodeId: newAlert.nodeId || newAlert.node_id || "UNKNOWN",
+          lat: newAlert.lat || newAlert.latitude || STATION_LAT,
+          lng: newAlert.lng || newAlert.longitude || STATION_LNG,
+          status: newAlert.status || 'OPEN'
         };
 
         setAlerts((prev) => {
-            if (prev.find(a => a.id === normalizedAlert.id)) return prev;
-            return [normalizedAlert, ...prev];
+          if (prev.find(a => a.id === normalizedAlert.id)) return prev;
+          return [normalizedAlert, ...prev];
         });
 
         setNodes((prev) => ({
@@ -161,7 +166,13 @@ export default function Dashboard() {
         }));
 
         addLog(`🚨 ANOMALY: Node ${normalizedAlert.nodeId} | Severity: ${normalizedAlert.severity}`, "error");
-      });
+      
+
+      // TRIGGER CAMERA ON HIGH SEVERITY
+      if (normalizedAlert.severity === "HIGH" || normalizedAlert.severity === "CRITICAL") {
+        setActiveTab("vision"); // Auto-switch tab
+        setCameraActive(true);  // Wake the camera
+      }});
 
       socket.on("alert_update", (updatedAlert) => {
         setAlerts((prev) => prev.map((a) => (a.id === updatedAlert.id ? updatedAlert : a)));
@@ -186,21 +197,77 @@ export default function Dashboard() {
   useEffect(() => {
     if (mode !== "TEST") return;
     const interval = setInterval(() => {
-        const t = Date.now();
-        const fakeData = {
-            node_id: "TEST-NODE-01",
-            timestamp: t,
-            lat: STATION_LAT, lng: STATION_LNG,
-            accel_mag: Math.random() * 0.5,
-            mag_norm: 45 + Math.cos(t/1000) * 5,
-            mic_level: Math.random() * 80, 
-            frequency: 48 + Math.random() * 4, 
-            temperature: 28, humidity: 60, pressure: 1013
-        };
-        setTelemetry(prev => [...prev, { time: new Date(t).toLocaleTimeString(), ...fakeData }].slice(-50));
+      const t = Date.now();
+      const fakeData = {
+        node_id: "TEST-NODE-01",
+        timestamp: t,
+        lat: STATION_LAT, lng: STATION_LNG,
+        accel_mag: Math.random() * 0.5,
+        mag_norm: 45 + Math.cos(t / 1000) * 5,
+        mic_level: Math.random() * 80,
+        frequency: 48 + Math.random() * 4,
+        temperature: 28, humidity: 60, pressure: 1013
+      };
+      setTelemetry(prev => [...prev, { time: new Date(t).toLocaleTimeString(), ...fakeData }].slice(-50));
     }, 500);
     return () => clearInterval(interval);
   }, [mode]);
+
+  // --- CAMERA & VLM LOGIC ---
+  useEffect(() => {
+    let stream = null;
+    let captureInterval = null;
+
+    const captureAndAnalyze = async () => {
+      if (videoRef.current && canvasRef.current) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const base64Image = canvas.toDataURL('image/jpeg', 0.8);
+
+        try {
+          addLog("Sending frame to Gemini VLM for analysis...", "info");
+          const res = await axios.post("http://localhost:3000/api/vision", { alert_id: `ALT-${Date.now()}`, image_base64: base64Image });
+
+          if (res.data.status === "success") {
+            setVisionVerdict({ confirmed: res.data.visual_confirmation, confidence: res.data.confidence, reason: res.data.reason });
+            addLog(`Vision ML: ${res.data.reason} (${res.data.confidence}%)`, res.data.visual_confirmation ? "error" : "success");
+          }
+        } catch (error) {
+          console.error("Vision API Error:", error);
+          addLog("Vision API request failed.", "error");
+        }
+      }
+    };
+
+    if (cameraActive) {
+      setVisionVerdict(null);
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then((mediaStream) => {
+          stream = mediaStream;
+          if (videoRef.current) videoRef.current.srcObject = stream;
+
+          // Wait 2 seconds for camera to adjust exposure, then capture
+          captureInterval = setTimeout(captureAndAnalyze, 2000);
+
+          // Power down camera after 15 seconds to simulate power saving
+          setTimeout(() => setCameraActive(false), 15000);
+        })
+        .catch(err => {
+          console.error("Camera error", err);
+          setCameraActive(false);
+        });
+    }
+
+    return () => {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      clearTimeout(captureInterval);
+    };
+  }, [cameraActive]);
 
   // --- ACTIONS ---
   const fetchAlerts = async () => {
@@ -254,15 +321,15 @@ export default function Dashboard() {
   const styles = {
     container: { display: "flex", flexDirection: "column", height: "100vh", width: "100%", overflow: "hidden", fontFamily: "'Inter', system-ui, sans-serif", backgroundColor: "#0f172a", color: "#e2e8f0" },
     header: { height: "80px", background: "rgba(15, 23, 42, 0.95)", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", flexShrink: 0, zIndex: 50 },
-    
+
     // Updated Logo Container - Pure White Background with more space
-    logoContainer: { 
-        display: "flex", alignItems: "center", gap: "16px", 
-        background: "#ffffff", padding: "4px 12px", borderRadius: "8px", marginRight: "16px",
-        boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
-        height: "64px" // Increased container height
+    logoContainer: {
+      display: "flex", alignItems: "center", gap: "16px",
+      background: "#ffffff", padding: "4px 12px", borderRadius: "8px", marginRight: "16px",
+      boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+      height: "64px" // Increased container height
     },
-    
+
     statusBadge: { display: "flex", alignItems: "center", gap: "8px", padding: "6px 12px", background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: "999px" },
     body: { display: "flex", flex: 1, height: "calc(100vh - 80px)", overflow: "hidden", width: "100%" },
     leftPanel: { flex: "0 0 35%", height: "100%", position: "relative", borderRight: "1px solid #334155", zIndex: 10 },
@@ -289,8 +356,8 @@ export default function Dashboard() {
     <div style={styles.container}>
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #020617; }
+        html, body, #root { width: 100vw; height: 100vh; max-width: none; padding: 0; margin: 0; overflow: hidden; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }::-webkit-scrollbar-track { background: #020617; }
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #64748b; }
         .status-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; animation: pulse 2s infinite; }
@@ -310,17 +377,17 @@ export default function Dashboard() {
         <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
           {/* Logo Section - Now on White Background */}
           <div style={styles.logoContainer}>
-             <img src={LOGO_EMBLEM} alt="Government of India" style={{ height: "100%", width: "auto" }} />
-             <div style={{width: "1px", height: "40px", background: "#cbd5e1"}}></div>
-             {/* INCREASED IR LOGO SIZE */}
-             <img src={IRLogo} alt="Indian Railways" style={{ height: "60px", width: "auto" }} onError={(e) => {e.target.onerror = null; e.target.src="https://via.placeholder.com/50"}}/>
+            <img src={LOGO_EMBLEM} alt="Government of India" style={{ height: "100%", width: "auto" }} />
+            <div style={{ width: "1px", height: "40px", background: "#cbd5e1" }}></div>
+            {/* INCREASED IR LOGO SIZE */}
+            <img src={IRLogo} alt="Indian Railways" style={{ height: "60px", width: "auto" }} onError={(e) => { e.target.onerror = null; e.target.src = "https://via.placeholder.com/50" }} />
           </div>
-          
+
           {/* Title Section */}
           <div>
             <h1 style={{ fontSize: "1.4rem", fontWeight: "800", letterSpacing: "-0.02em", color: "#f8fafc", margin: 0, lineHeight: 1 }}>RailGuard Command</h1>
             <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: "600", marginTop: "4px", letterSpacing: "0.05em" }}>
-                MINISTRY OF RAILWAYS | RDSO COMPLIANT
+              MINISTRY OF RAILWAYS | RDSO COMPLIANT
             </div>
           </div>
         </div>
@@ -329,15 +396,45 @@ export default function Dashboard() {
         <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
           {/* Make in India Badge - INCREASED SIZE */}
           <div style={{ background: "white", padding: "4px 12px", borderRadius: "6px", display: "flex", alignItems: "center", height: "55px" }}>
-             <img src={MakeInIndiaLogo} alt="Make In India" style={{ height: "100%", width: "auto" }} onError={(e) => {e.target.onerror = null; e.target.src="https://via.placeholder.com/50"}} />
+            <img src={MakeInIndiaLogo} alt="Make In India" style={{ height: "100%", width: "auto" }} onError={(e) => { e.target.onerror = null; e.target.src = "https://via.placeholder.com/50" }} />
           </div>
-          
+
           <div style={{ width: "1px", height: "30px", background: "#475569" }}></div>
-          
+
           <select style={styles.modeSelect} value={mode} onChange={(e) => setMode(e.target.value)}>
             <option value="LIVE">LIVE SENSORS</option>
             <option value="TEST">TEST MODE (SIM)</option>
           </select>
+          {mode === "TEST" && (
+            <button 
+              style={{ padding: "8px 16px", background: "#ef4444", color: "white", border: "none", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", boxShadow: "0 0 10px rgba(239, 68, 68, 0.5)" }}
+              onClick={() => {
+                 // 1. Play the sound
+                 try { new Audio("/alert.mp3").play().catch(() => {}); } catch(e){}
+                 
+                 // 2. Create the fake alert
+                 const fakeAlert = {
+                   id: `TEST-${Date.now()}`, 
+                   nodeId: "TEST-NODE-01", 
+                   severity: "CRITICAL", 
+                   lat: STATION_LAT, 
+                   lng: STATION_LNG,
+                   status: "OPEN",
+                   timestamp: Date.now()
+                 };
+
+                 // 3. Force the UI to update
+                 setAlerts(prev => [fakeAlert, ...prev]);
+                 setNodes(prev => ({...prev, "TEST-NODE-01": {...prev["TEST-NODE-01"], status: "red"}}));
+                 
+                 // 4. WAKE THE CAMERA!
+                 setActiveTab("vision");
+                 setCameraActive(true);
+              }}
+            >
+              🚨 SIMULATE THREAT
+            </button>
+          )}
           <div style={styles.statusBadge}>
             <div className="status-dot" style={{ background: mode === "LIVE" ? "#10b981" : "#f59e0b" }}></div>
             <span style={{ fontSize: "0.8rem", color: mode === "LIVE" ? "#10b981" : "#f59e0b", fontWeight: "700" }}>
@@ -353,25 +450,25 @@ export default function Dashboard() {
         <div style={styles.leftPanel}>
           <MapContainer center={[STATION_LAT, STATION_LNG]} zoom={16} zoomControl={false} style={{ height: "100%" }}>
             {/* 1. Base Layer: Standard Light OSM */}
-            <TileLayer 
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" 
-                attribution='&copy; OpenStreetMap' 
-                maxZoom={19} 
+            <TileLayer
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              attribution='&copy; OpenStreetMap'
+              maxZoom={19}
             />
             {/* 2. Overlay: OpenRailwayMap (Tracks & Signals) */}
-            <TileLayer 
-                url="https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png" 
-                attribution='&copy; OpenRailwayMap' 
-                maxZoom={19} 
+            <TileLayer
+              url="https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png"
+              attribution='&copy; OpenRailwayMap'
+              maxZoom={19}
             />
-            
+
             {filteredAlerts.map((alert) => (
               <Marker key={`alert-${alert.id}`} position={[alert.lat || 0, alert.lng || 0]} icon={icons.red}>
                 <Popup className="custom-popup">
                   <div style={{ fontFamily: "Inter, sans-serif", color: "#1e293b" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                        <span style={{ fontSize: "1.2rem" }}>🚨</span>
-                        <b style={{ color: "#ef4444", fontSize: "1rem" }}>THREAT DETECTED</b>
+                      <span style={{ fontSize: "1.2rem" }}>🚨</span>
+                      <b style={{ color: "#ef4444", fontSize: "1rem" }}>THREAT DETECTED</b>
                     </div>
                     <div style={{ fontSize: "0.85rem", marginBottom: "4px" }}><b>Node:</b> {alert.nodeId}</div>
                     <div style={{ fontSize: "0.85rem", marginBottom: "8px" }}><b>Severity:</b> <span style={{ fontWeight: "bold", color: "#ef4444" }}>{alert.severity}</span></div>
@@ -413,18 +510,18 @@ export default function Dashboard() {
             </div>
             <div style={styles.kpiCard}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                 <div style={styles.kpiLabel}>Active Nodes</div>
-                 <div style={{ color: "#3b82f6" }}>●</div>
+                <div style={styles.kpiLabel}>Active Nodes</div>
+                <div style={{ color: "#3b82f6" }}>●</div>
               </div>
-              <div style={styles.kpiValue} style={{ color: "#60a5fa" }}>{Object.keys(nodes).length} <span style={{fontSize: "0.9rem", color:"#64748b"}}>/ {Object.keys(nodes).length + 2}</span></div>
+              <div style={styles.kpiValue} style={{ color: "#60a5fa" }}>{Object.keys(nodes).length} <span style={{ fontSize: "0.9rem", color: "#64748b" }}>/ {Object.keys(nodes).length + 2}</span></div>
             </div>
             <div style={styles.kpiCard}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                 <div style={styles.kpiLabel}>Max Impact</div>
-                 <div style={{ color: "#f59e0b" }}>●</div>
+                <div style={styles.kpiLabel}>Max Impact</div>
+                <div style={{ color: "#f59e0b" }}>●</div>
               </div>
               <div style={styles.kpiValue} style={{ color: "#f8fafc" }}>
-                  {latestEnv.accel_mag ? latestEnv.accel_mag.toFixed(3) : "0.00"} <span style={{fontSize: "0.9rem", color:"#64748b"}}>g</span>
+                {latestEnv.accel_mag ? latestEnv.accel_mag.toFixed(3) : "0.00"} <span style={{ fontSize: "0.9rem", color: "#64748b" }}>g</span>
               </div>
             </div>
           </div>
@@ -435,9 +532,9 @@ export default function Dashboard() {
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                 <span style={{ fontWeight: "700", fontSize: "0.9rem", color: "#f1f5f9" }}>INCIDENT FEED</span>
                 {filteredAlerts.length > 0 && (
-                    <span style={{ background: "rgba(239, 68, 68, 0.2)", color: "#fca5a5", fontSize: "0.7rem", padding: "2px 8px", borderRadius: "10px", fontWeight: "700", border: "1px solid rgba(239, 68, 68, 0.3)" }}>
-                        {filteredAlerts.length} ACTIVE
-                    </span>
+                  <span style={{ background: "rgba(239, 68, 68, 0.2)", color: "#fca5a5", fontSize: "0.7rem", padding: "2px 8px", borderRadius: "10px", fontWeight: "700", border: "1px solid rgba(239, 68, 68, 0.3)" }}>
+                    {filteredAlerts.length} ACTIVE
+                  </span>
                 )}
               </div>
               <div>
@@ -464,11 +561,11 @@ export default function Dashboard() {
                       <td style={{ padding: "12px 20px", fontSize: "0.85rem", fontWeight: "600", color: "#f8fafc" }}>{alert.nodeId}</td>
                       <td style={{ padding: "12px 20px", fontSize: "0.8rem", fontFamily: "monospace", color: "#94a3b8" }}>{Number(alert.lat).toFixed(3)}, {Number(alert.lng).toFixed(3)}</td>
                       <td style={{ padding: "12px 20px" }}>
-                        <span style={{ 
-                            padding: "4px 10px", borderRadius: "6px", fontSize: "0.7rem", fontWeight: "bold", 
-                            background: alert.severity === "HIGH" ? "rgba(239, 68, 68, 0.2)" : "rgba(245, 158, 11, 0.2)", 
-                            color: alert.severity === "HIGH" ? "#fca5a5" : "#fcd34d",
-                            border: `1px solid ${alert.severity === "HIGH" ? "rgba(239, 68, 68, 0.4)" : "rgba(245, 158, 11, 0.4)"}`
+                        <span style={{
+                          padding: "4px 10px", borderRadius: "6px", fontSize: "0.7rem", fontWeight: "bold",
+                          background: alert.severity === "HIGH" ? "rgba(239, 68, 68, 0.2)" : "rgba(245, 158, 11, 0.2)",
+                          color: alert.severity === "HIGH" ? "#fca5a5" : "#fcd34d",
+                          border: `1px solid ${alert.severity === "HIGH" ? "rgba(239, 68, 68, 0.4)" : "rgba(245, 158, 11, 0.4)"}`
                         }}>{alert.severity}</span>
                       </td>
                       <td style={{ padding: "12px 20px", textAlign: "right" }}>
@@ -494,9 +591,10 @@ export default function Dashboard() {
             <div style={styles.tabHeader}>
               <span style={styles.tab(activeTab === "telemetry")} onClick={() => setActiveTab("telemetry")}>LIVE TELEMETRY</span>
               <span style={styles.tab(activeTab === "health")} onClick={() => setActiveTab("health")}>DEVICE HEALTH</span>
+              <span style={styles.tab(activeTab === "vision")} onClick={() => setActiveTab("vision")}>VISION FEED (AI)</span>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "10px" }}>
                 <span style={{ fontSize: "0.7rem", color: "#64748b", fontWeight: "600" }}>PLAYBACK:</span>
-                <input type="checkbox" checked={replayMode} onChange={(e) => setReplayMode(e.target.checked)} style={{accentColor: "#3b82f6"}} />
+                <input type="checkbox" checked={replayMode} onChange={(e) => setReplayMode(e.target.checked)} style={{ accentColor: "#3b82f6" }} />
                 {replayMode && (<input type="range" min="0" max="100" value={replayIndex} onChange={(e) => setReplayIndex(e.target.value)} style={{ width: "100px" }} />)}
               </div>
             </div>
@@ -522,7 +620,7 @@ export default function Dashboard() {
 
                 {/* 2. MAGNETIC */}
                 <div style={styles.chartCard}>
-                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
                     <div style={{ fontSize: "0.75rem", fontWeight: "700", color: "#94a3b8" }}>MAGNETIC FLUX (µT)</div>
                     <div style={{ fontSize: "0.7rem", color: "#f59e0b" }}>MAGNETOMETER</div>
                   </div>
@@ -545,17 +643,17 @@ export default function Dashboard() {
                   </div>
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={displayTelemetry}>
-                        <defs>
-                            <linearGradient id="colorMic" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
-                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#334155" strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="time" hide />
-                        <YAxis domain={[0, 100]} width={30} tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                        <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderRadius: "8px", border: "1px solid #334155", boxShadow: "0 4px 6px rgba(0,0,0,0.3)", color: "#f8fafc" }} />
-                        <Area type="monotone" dataKey="mic_level" stroke="#3b82f6" fillOpacity={1} fill="url(#colorMic)" isAnimationActive={false} />
+                      <defs>
+                        <linearGradient id="colorMic" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#334155" strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="time" hide />
+                      <YAxis domain={[0, 100]} width={30} tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderRadius: "8px", border: "1px solid #334155", boxShadow: "0 4px 6px rgba(0,0,0,0.3)", color: "#f8fafc" }} />
+                      <Area type="monotone" dataKey="mic_level" stroke="#3b82f6" fillOpacity={1} fill="url(#colorMic)" isAnimationActive={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -568,22 +666,22 @@ export default function Dashboard() {
                   </div>
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={displayTelemetry}>
-                        <defs>
-                            <linearGradient id="colorFreq" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/>
-                                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#334155" strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="time" hide />
-                        <YAxis domain={['auto', 'auto']} width={30} tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                        <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderRadius: "8px", border: "1px solid #334155", boxShadow: "0 4px 6px rgba(0,0,0,0.3)", color: "#f8fafc" }} />
-                        <Area type="monotone" dataKey="frequency" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorFreq)" isAnimationActive={false} />
+                      <defs>
+                        <linearGradient id="colorFreq" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#334155" strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="time" hide />
+                      <YAxis domain={['auto', 'auto']} width={30} tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderRadius: "8px", border: "1px solid #334155", boxShadow: "0 4px 6px rgba(0,0,0,0.3)", color: "#f8fafc" }} />
+                      <Area type="monotone" dataKey="frequency" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorFreq)" isAnimationActive={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>
-            ) : (
+            ) : activeTab === "health" ? (
               <div style={styles.gridContainer}>
                 <div style={styles.chartCard}>
                   <div style={{ fontSize: "0.75rem", fontWeight: "700", color: "#94a3b8", marginBottom: "10px" }}>TRACK TEMPERATURE</div>
@@ -606,23 +704,67 @@ export default function Dashboard() {
                   <div style={{ fontSize: "0.75rem", fontWeight: "700", color: "#94a3b8", marginBottom: "10px" }}>NODE STATUS</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "20px", marginTop: "10px" }}>
                     <div>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
-                            <span style={{ fontSize: "0.8rem", color: "#cbd5e1" }}>Battery Level</span>
-                            <span style={{ fontSize: "0.8rem", color: "#10b981" }}>{currentNode?.battery || 85}%</span>
-                        </div>
-                        <div style={{ width: "100%", height: "8px", background: "#334155", borderRadius: "4px" }}><div style={{ width: `${currentNode?.battery || 85}%`, height: "100%", background: "#10b981", borderRadius: "4px", boxShadow: "0 0 10px rgba(16,185,129,0.3)" }}></div></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
+                        <span style={{ fontSize: "0.8rem", color: "#cbd5e1" }}>Battery Level</span>
+                        <span style={{ fontSize: "0.8rem", color: "#10b981" }}>{currentNode?.battery || 85}%</span>
+                      </div>
+                      <div style={{ width: "100%", height: "8px", background: "#334155", borderRadius: "4px" }}><div style={{ width: `${currentNode?.battery || 85}%`, height: "100%", background: "#10b981", borderRadius: "4px", boxShadow: "0 0 10px rgba(16,185,129,0.3)" }}></div></div>
                     </div>
                     <div>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
-                            <span style={{ fontSize: "0.8rem", color: "#cbd5e1" }}>Signal Strength (RSSI)</span>
-                            <span style={{ fontSize: "0.8rem", color: "#3b82f6" }}>Good</span>
-                        </div>
-                        <div style={{ width: "100%", height: "8px", background: "#334155", borderRadius: "4px" }}><div style={{ width: "70%", height: "100%", background: "#3b82f6", borderRadius: "4px", boxShadow: "0 0 10px rgba(59,130,246,0.3)" }}></div></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
+                        <span style={{ fontSize: "0.8rem", color: "#cbd5e1" }}>Signal Strength (RSSI)</span>
+                        <span style={{ fontSize: "0.8rem", color: "#3b82f6" }}>Good</span>
+                      </div>
+                      <div style={{ width: "100%", height: "8px", background: "#334155", borderRadius: "4px" }}><div style={{ width: "70%", height: "100%", background: "#3b82f6", borderRadius: "4px", boxShadow: "0 0 10px rgba(59,130,246,0.3)" }}></div></div>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
+
+            ) : activeTab === "vision" ? (
+              /* --- VISION UI --- */
+              <div style={{ ...styles.chartCard, height: "400px", border: cameraActive ? "2px solid #ef4444" : "1px solid #334155" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "15px" }}>
+                  <div style={{ fontSize: "0.85rem", fontWeight: "700", color: cameraActive ? "#ef4444" : "#94a3b8" }}>
+                    <span className="status-dot" style={{ display: "inline-block", marginRight: "8px", background: cameraActive ? "#ef4444" : "#64748b", animation: cameraActive ? "pulse 1s infinite" : "none" }}></span>
+                    WAKE-ON-THREAT CAMERA
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: "#94a3b8" }}>GEMINI 1.5 FLASH (VLM)</div>
+                </div>
+
+                <div style={{ flex: 1, backgroundColor: "#000", borderRadius: "8px", overflow: "hidden", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+
+                  {/* Hidden Canvas for taking snapshots */}
+                  <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+                  {cameraActive ? (
+                    <>
+                      <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+
+                      {/* ML Verdict Overlay */}
+                      {visionVerdict && (
+                        <div style={{ position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)', background: visionVerdict.confirmed ? 'rgba(239, 68, 68, 0.95)' : 'rgba(16, 185, 129, 0.95)', padding: '12px 24px', borderRadius: '8px', color: 'white', textAlign: 'center', boxShadow: '0 4px 6px rgba(0,0,0,0.5)' }}>
+                          <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '4px' }}>
+                            {visionVerdict.confirmed ? "⚠️ SABOTAGE DETECTED" : "✅ VISUAL CLEAR"}
+                          </div>
+                          <div style={{ fontSize: '0.85rem', opacity: 0.9, marginBottom: '4px' }}>
+                            AI Confidence: {visionVerdict.confidence}%
+                          </div>
+                          <div style={{ fontSize: '0.8rem', fontStyle: 'italic', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: '4px' }}>
+                            "{visionVerdict.reason}"
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ color: "#475569", textAlign: "center", fontFamily: "monospace" }}>
+                      <div style={{ fontSize: "2rem", marginBottom: "8px" }}>💤</div>
+                      CAMERA IN DEEP SLEEP
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
