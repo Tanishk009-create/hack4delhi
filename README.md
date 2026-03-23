@@ -1,7 +1,9 @@
 <div align="center">
 
   <img src="https://upload.wikimedia.org/wikipedia/en/thumb/4/45/Indian_Railways_logo.svg/1200px-Indian_Railways_logo.svg.png" alt="Indian Railways" width="100" />
-  <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Emblem_of_India.svg/240px-Emblem_of_India.svg.png" alt="GOI" width="60" style="margin-left: 20px; margin-right: 20px;"/>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Emblem_of_India.svg/240px-Emblem_of_India.svg.png" alt="GOI" width="60" />
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <img src="https://upload.wikimedia.org/wikipedia/en/thumb/1/1d/Make_In_India.png/800px-Make_In_India.png" alt="Make in India" width="120" />
 
   <br/><br/>
@@ -61,17 +63,18 @@ graph LR
   <tr>
     <td align="center"><strong>Hardware: ESP32 Edge Node</strong></td>
     <td align="center"><strong>Hardware: Field Deployment</strong></td>
+    <td align="center"><strong>Hardware: Prototype</strong></td>
   </tr>
   <tr>
     <td><img src="Documents/prototype/hardware_circuit.jpeg" alt="ESP32 Breadboard Circuit" width="400"/></td>
     <td><img src="Documents/prototype/hardware_track.jpeg" alt="Node Deployed on Tracks" width="400"/></td>
+    <td><img src="Documents/prototype/prototype.jpeg" alt="Prototype" width="400"/></td>
   </tr>
   <tr>
     <td align="center"><strong>Software: Live Telemetry Dashboard</strong></td>
     <td align="center"><strong>Software: VLM Sabotage Detection</strong></td>
   </tr>
   <tr>
-    <td><img src="Documents/prototype/prototype.jpeg" alt="Prototype" width="400"/></td>
     <td><img src="Documents/prototype/dashboard_live.jpeg" alt="Dashboard showing live sensor telemetry" width="400"/></td>
     <td><img src="Documents/prototype/dashboard_alert.jpeg" alt="Dashboard showing camera visual alert" width="400"/></td>
   </tr>
