@@ -1,8 +1,3 @@
-Here is the complete, updated code for your `README.md` file. 
-
-[cite_start]I have updated the repository URL to match the exact GitHub link from your presentation (`thesurajarya/hack4delhi.git`) [cite: 253] so it is completely ready to copy, paste, and push!
-
-```markdown
 <div align="center">
 
   <img src="https://upload.wikimedia.org/wikipedia/en/thumb/4/45/Indian_Railways_logo.svg/1200px-Indian_Railways_logo.svg.png" alt="Indian Railways" width="100" />
@@ -30,7 +25,6 @@ Here is the complete, updated code for your `README.md` file.
 
 </div>
 
----
 
 ## 🚨 Problem Statement
 
@@ -40,7 +34,7 @@ Railway safety is critical, yet infrastructure is often compromised by sabotage,
 * **Analyze** multi-sensor data using Edge AI and Cloud Vision-Language Models (VLMs).
 * **Alert** operators instantly via a geospatial dashboard with visual evidence.
 
----
+
 
 ## 🧠 System Architecture
 
@@ -59,7 +53,7 @@ graph LR
 
 > **Flow:** Sensors → MQTT Broker → Node Server → Physics Inference → Wake Camera → VLM Validation → Dashboard UI
 
----
+
 
 ## 📸 Prototype in Action
 
@@ -83,19 +77,19 @@ graph LR
   </tr>
 </table>
 
----
+
 
 ## 🛠 Tech Stack
 
 | Domain | Technology | Description |
-| --- | --- | --- |
+|  |  |  |
 | **Hardware** | `ESP32 / ADXL345` | Edge node collecting Vibration, Magnetic (QMC5883L) & Sound (INMP441) data. |
 | **Backend** | `Node.js / Express` | Server acting as the bridge between MQTT, AI, and Frontend. |
 | **AI Engine** | `FastAPI / Gemini` | Physics-based rules for initial anomaly trigger, followed by VLM visual validation. |
 | **Frontend** | `React / Vite` | Dashboard with Leaflet Maps (OpenRailwayMap) & Recharts for live telemetry. |
 | **Comms** | `MQTT / WebSockets`| Low-latency protocol for IoT sensor data transmission to UI. |
 
----
+
 
 ## ⚙️ Installation & Setup
 
@@ -143,7 +137,7 @@ cd Software/frontend
 npm install
 ```
 
----
+
 
 ## 🚀 How to Run
 
@@ -170,7 +164,7 @@ npm run dev
 ```
 > *Output:* `➜ Local: http://localhost:5173/`
 
----
+
 
 ## 🧪 Testing the System
 
@@ -179,7 +173,7 @@ npm run dev
 3. **Simulate Threat:** Click the red `🚨 SIMULATE THREAT` button. The camera will wake up, snap a photo, and send it to the VLM.
 4. **Hardware Test:** If using ESP32, switch to **LIVE SENSORS** mode and shake the sensor violently to trigger the edge-to-cloud alert pipeline.
 
----
+
 
 <div align="center">
 <b>Built for Hack4Delhi / Railway Safety Projects 🇮🇳</b>
