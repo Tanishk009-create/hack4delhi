@@ -14,7 +14,7 @@ import IRLogo from "../assets/IRLogo.png";
 import MakeInIndiaLogo from "../assets/MakeInIndiaLogo.jpeg";
 
 // Fallback Emblem (Online)
-const LOGO_EMBLEM = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Emblem_of_India.svg/240px-Emblem_of_India.svg.png";
+const LOGO_EMBLEM = "https://www.wirecable.in/wp-content/uploads/2023/07/GOI.jpg";
 
 // --- ICONS & ASSETS ---
 const getIcon = (color) =>
