@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
