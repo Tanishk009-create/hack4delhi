@@ -173,7 +173,7 @@ export default function Dashboard() {
           // Prevent duplicate alerts
           if (prev.find((a) => a.id === newAlert.id)) return prev;
 
-          // Play sound
+          // Play sound for new alerts
           try {
             new Audio("/alert.mp3").play().catch(() => {});
           } catch (e) {}
@@ -185,10 +185,15 @@ export default function Dashboard() {
           return [newAlert, ...prev];
         });
 
-        // Trigger Camera
-        if (newAlert.severity === "HIGH" || newAlert.severity === "CRITICAL") {
+        // --- UPDATED: TRIGGER CAMERA FOR MEDIUM, HIGH, AND CRITICAL ---
+        if (["MEDIUM", "HIGH", "CRITICAL"].includes(newAlert.severity)) {
+          // 1. Switch the tab immediately to start mounting the Video HTML
           setActiveTab("vision");
-          setCameraActive(true);
+
+          // 2. Wait 300 milliseconds for React to finish drawing the screen, THEN turn on the camera
+          setTimeout(() => {
+            setCameraActive(true);
+          }, 300);
         }
       });
     } else {
@@ -1123,16 +1128,14 @@ export default function Dashboard() {
                             fontSize: "0.7rem",
                             fontWeight: "bold",
                             background:
-                              alert.severity === "HIGH" ||
-                              alert.severity === "CRITICAL"
+                              ["MEDIUM", "HIGH", "CRITICAL"].includes(alert.severity)
                                 ? "rgba(239, 68, 68, 0.2)"
                                 : "rgba(245, 158, 11, 0.2)",
                             color:
-                              alert.severity === "HIGH" ||
-                              alert.severity === "CRITICAL"
+                              ["MEDIUM", "HIGH", "CRITICAL"].includes(alert.severity)
                                 ? "#fca5a5"
                                 : "#fcd34d",
-                            border: `1px solid ${alert.severity === "HIGH" || alert.severity === "CRITICAL" ? "rgba(239, 68, 68, 0.4)" : "rgba(245, 158, 11, 0.4)"}`,
+                            border: `1px solid ${["MEDIUM", "HIGH", "CRITICAL"].includes(alert.severity) ? "rgba(239, 68, 68, 0.4)" : "rgba(245, 158, 11, 0.4)"}`,
                           }}
                         >
                           {alert.severity}
@@ -1763,7 +1766,7 @@ export default function Dashboard() {
                         }}
                       />
 
-                      {/* ML Verdict Overlay */}
+                      {/* ML Verdict Overlay --- RE-ORDERED FOR VISIBILITY --- */}
                       {visionVerdict && (
                         <div
                           style={{
@@ -1779,6 +1782,7 @@ export default function Dashboard() {
                             color: "white",
                             textAlign: "center",
                             boxShadow: "0 4px 6px rgba(0,0,0,0.5)",
+                            zIndex: 100
                           }}
                         >
                           <div

@@ -20,6 +20,8 @@ const io = initSocket(server);
 
 // --- CONFIGURATION ---
 const PYTHON_AI_URL = 'http://127.0.0.1:5000/predict';
+const dashboardAlertCooldowns = new Map();         // <--- ADD THIS
+const DASHBOARD_COOLDOWN_TIME = 15 * 1000;         // <--- ADD THIS (15 Seconds)
 
 // --- API ROUTES ---
 
@@ -71,29 +73,36 @@ const mqttClient = connectMQTT(async (rawData) => {
             io.emit('sensor_update', telemetryPacket);
 
             // ==========================================
+            // ==========================================
             // NEW: 3. Handle Alerts if Python Flags Anomaly
             // ==========================================
             if (aiAnalysis.is_anomaly) {
-                console.log(`Registering Incident: ${targetNodeId}`);
-                
-                // Use the severity calculated by Python
-                const severity = aiAnalysis.severity || "MEDIUM"; 
-                
-                // Save to Database (JSON file)
-                const savedAlert = dataController.addAlert(targetNodeId, severity);
-                
-                // MERGE Data for Frontend Map
-                const broadcastPacket = {
-                    ...savedAlert,                 // Contains DB ID and Timestamp
-                    lat: rawData.lat || rawData.latitude || 28.6139, 
-                    lng: rawData.lng || rawData.longitude || 77.2090,
-                    anomaly_score: aiAnalysis.anomaly_score || 1.0,
-                    nodeId: targetNodeId,
-                    reasons: aiAnalysis.reasons ? aiAnalysis.reasons.join(", ") : "" // Pass Python reasons
-                };
-                
-                // Broadcast FULL alert object to Frontend
-                io.emit('new_alert', broadcastPacket);
+                const now = Date.now();
+                const lastAlertTime = dashboardAlertCooldowns.get(targetNodeId) || 0;
+
+                // FLOOD PROTECTION: Only trigger a new dashboard incident every 15 seconds
+                if (now - lastAlertTime > DASHBOARD_COOLDOWN_TIME) {
+                    dashboardAlertCooldowns.set(targetNodeId, now); // Update cooldown timer
+                    
+                    console.log(`🚨 Registering New Incident: ${targetNodeId}`);
+                    
+                    const severity = aiAnalysis.severity || "CRITICAL"; 
+                    const savedAlert = dataController.addAlert(targetNodeId, severity);
+                    
+                    // MERGE Data for Frontend Map
+                    const broadcastPacket = {
+                        ...savedAlert,                 
+                        lat: rawData.lat || rawData.latitude || 28.6139, 
+                        lng: rawData.lng || rawData.longitude || 77.2090,
+                        anomaly_score: aiAnalysis.anomaly_score || 1.0,
+                        nodeId: targetNodeId,
+                        severity: severity, // <--- CRITICAL FIX: Ensures React knows to open the camera!
+                        reasons: aiAnalysis.reasons ? aiAnalysis.reasons.join(", ") : "" 
+                    };
+                    
+                    // Broadcast FULL alert object to Frontend
+                    io.emit('new_alert', broadcastPacket);
+                }
             }
 
         } catch (error) {
@@ -121,7 +130,7 @@ app.post('/api/vision', async (req, res) => {
         // Note: 'gemini-2.5-flash' is not a standard model name yet. 
         // If this fails, revert to 'gemini-1.5-flash'
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash", 
+            model: "gemini-2.5-flash", 
             generationConfig: { responseMimeType: "application/json" } 
         });
 

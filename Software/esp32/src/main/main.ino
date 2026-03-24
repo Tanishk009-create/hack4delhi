@@ -218,5 +218,5 @@ void loop() {
   Serial.print(" | Tilt:"); Serial.print(tilt_val);
   Serial.print(" | Mic:"); Serial.println(mic_noise_level, 1);
 
-  delay(500); // 2Hz Transmission
+  delay(750); // 2Hz Transmission
 }
