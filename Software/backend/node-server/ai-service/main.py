@@ -34,9 +34,17 @@ else:
 
 # Features must match your training data exactly
 FEATURES = [
-    "accel_mag", "delta_accel_mag", "accel_std",
-    "mag_norm", "delta_mag_norm",
-    "TEMPERATURE", "HUMIDITY", "PRESSURE"
+    "accel_mag",
+    "delta_accel_mag",
+    "accel_roll_mean",
+    "accel_roll_std",
+    "accel_roll_rms",
+    "accel_roll_range",
+    "mag_norm",
+    "delta_mag_norm",
+    "TEMPERATURE",
+    "HUMIDITY",
+    "PRESSURE",
 ]
 
 # ===============================
@@ -87,14 +95,21 @@ def predict(data: SensorInput):
         if len(buffer) > WINDOW_SIZE:
             buffer.pop(0)
 
-        # Calculate "accel_std" (Standard Deviation)
-        accel_std = np.std(buffer) if len(buffer) > 1 else 0.0
+        # --- UPDATED: Calculate exact rolling stats needed by the AI Model ---
+        accel_roll_mean = np.mean(buffer) if len(buffer) > 0 else 0.0
+        accel_roll_std = np.std(buffer) if len(buffer) > 1 else 0.0
+        accel_roll_range = (np.max(buffer) - np.min(buffer)) if len(buffer) > 0 else 0.0
+        accel_roll_rms = np.sqrt(np.mean(np.square(buffer))) if len(buffer) > 0 else 0.0
         
         # --- B. PREPARE FEATURE ROW FOR AI ---
+        # UPDATED: Row now perfectly matches the FEATURES array
         row = {
             "accel_mag": current_accel_mag,
             "delta_accel_mag": 0.0, # Simplified for real-time stream
-            "accel_std": float(accel_std),
+            "accel_roll_mean": float(accel_roll_mean),
+            "accel_roll_range": float(accel_roll_range),
+            "accel_roll_rms": float(accel_roll_rms),
+            "accel_roll_std": float(accel_roll_std),
             "mag_norm": current_mag_norm,
             "delta_mag_norm": 0.0,
             "TEMPERATURE": data.temperature,
