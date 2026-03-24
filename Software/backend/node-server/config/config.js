@@ -1,6 +1,6 @@
 module.exports = {
     mqtt: {
-        brokerUrl: 'mqtt://broker.hivemq.com', 
+        brokerUrl: 'mqtt:test.mosquitto.org', 
         // topic: 'railway/sensor/+'
         topic: 'railguard_live_stream'
     },

@@ -88,7 +88,7 @@ void setup() {
   accel.setRange(ADXL345_RANGE_16_G);
 
   compass.init();
-  compass.setMode(0x01, 0x0D, 0x00, 0x00); 
+  // FIXED: Removed the incorrect compass.setMode() line. init() handles default setup.
 
   initINMP441();
 
@@ -156,7 +156,9 @@ void loop() {
   int32_t mic_sample = 0;
   size_t bytes_read = 0;
   int32_t sample_buffer[64]; 
-  i2s_read(I2S_PORT, &sample_buffer, sizeof(sample_buffer), &bytes_read, 100);
+  
+  // FIXED: Removed the '&' before sample_buffer
+  i2s_read(I2S_PORT, sample_buffer, sizeof(sample_buffer), &bytes_read, 100);
   
   long mic_sum = 0;
   for(int i=0; i<64; i++) {
@@ -165,12 +167,13 @@ void loop() {
   float mic_noise_level = mic_sum / 64.0;
 
   // --- 5. PREPARE JSON PACKET ---
-  StaticJsonDocument<1024> doc;
+  // FIXED: Reduced buffer size to 512 to save ESP32 memory
+  StaticJsonDocument<512> doc;
   
   doc["node_id"] = node_id;
   doc["timestamp"] = millis();
 
-  // GPS (Constant)
+  // GPS (Constant for now)
   doc["latitude"] = 28.6139;
   doc["longitude"] = 77.2090;
 
@@ -178,7 +181,8 @@ void loop() {
   doc["accel_x"] = ax;
   doc["accel_y"] = ay;
   doc["accel_z"] = az;
-  doc["frequency"] = freq_val;
+  // FIXED: Replaced undeclared freq_val with a placeholder 0.0
+  doc["frequency"] = 0.0; 
   doc["mag_x"] = mx;
   doc["mag_y"] = my;
   doc["mag_z"] = mz;
@@ -198,10 +202,11 @@ void loop() {
   doc["pressure"] = 1013.25;
 
   // Serialize & Send
-  char buffer[1024];
+  char buffer[512];
   size_t n = serializeJson(doc, buffer);
 
-  client.publish("railguard_live_stream", buffer, n);
+  // FIXED: Removed the 'n' argument. publish() only needs topic and payload.
+  client.publish("railguard_live_stream", buffer);
 
   // --- DEBUG PRINT: All Raw Values ---
   Serial.print("Ax:"); Serial.print(ax, 2);

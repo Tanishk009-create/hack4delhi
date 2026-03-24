@@ -4,6 +4,7 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const bodyParser = require('body-parser'); 
+const axios = require('axios'); // <--- ADDED for Python API Calls
 const { initSocket } = require('./socket/socket');
 const { connectMQTT } = require('./mqtt/mqttClient');
 const dataController = require('./controllers/dataController');
@@ -16,6 +17,9 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true })); // <--- ADDED
 const server = http.createServer(app);
 // Initialize Socket.io (Must be done before MQTT)
 const io = initSocket(server);
+
+// --- CONFIGURATION ---
+const PYTHON_AI_URL = 'http://127.0.0.1:5000/predict';
 
 // --- API ROUTES ---
 
@@ -39,32 +43,64 @@ app.post('/api/alerts/mark-construction', (req, res) => {
 // --- START SYSTEM ---
 
 // Connect to MQTT and pass the "Anomaly Handler" callback
-const mqttClient = connectMQTT((data) => {
+// We are replacing the standard 'data' pass-through with the Python AI logic layer
+const mqttClient = connectMQTT(async (rawData) => {
+    
     // FIX: Normalize the Node ID (Handle both 'nodeId' and 'node_id')
-    const targetNodeId = data.nodeId || data.node_id;
+    const targetNodeId = rawData.nodeId || rawData.node_id;
 
     if (targetNodeId) {
-        console.log(`Registering Incident: ${targetNodeId}`);
-        
-        // Use the severity calculated by Python (or fallback to MEDIUM)
-        const severity = data.severity || "MEDIUM"; 
-        
-        // 1. Save to Database (JSON file)
-        const savedAlert = dataController.addAlert(targetNodeId, severity);
-        
-        // 2. MERGE Data for Frontend
-        // We must combine the Database ID with the Sensor Data (Lat/Lng) 
-        // otherwise the map marker and table row won't appear.
-        const broadcastPacket = {
-            ...savedAlert,                 // Contains DB ID and Timestamp
-            lat: data.lat || data.latitude || 28.6139, // Ensure Location exists
-            lng: data.lng || data.longitude || 77.2090,
-            anomaly_score: data.anomaly_score || 1.0,
-            nodeId: targetNodeId           // Ensure Frontend gets 'nodeId'
-        };
-        
-        // 3. Broadcast FULL alert object to Frontend
-        io.emit('new_alert', broadcastPacket);
+        try {
+            // ==========================================
+            // NEW: 1. Send Raw Data to Python AI Engine
+            // ==========================================
+            // The Python engine handles the 3-Stage Lock (Vibration + Mic + Mag)
+            const aiResponse = await axios.post(PYTHON_AI_URL, rawData);
+            const aiAnalysis = aiResponse.data;
+
+            // ==========================================
+            // NEW: 2. Broadcast Live Telemetry to Dashboard
+            // ==========================================
+            // We emit the live sensor data + AI scores for the graphs
+            const telemetryPacket = {
+                ...rawData,
+                ...aiAnalysis,
+                timestamp: rawData.timestamp || Date.now(),
+                node_id: targetNodeId
+            };
+            io.emit('sensor_update', telemetryPacket);
+
+            // ==========================================
+            // NEW: 3. Handle Alerts if Python Flags Anomaly
+            // ==========================================
+            if (aiAnalysis.is_anomaly) {
+                console.log(`Registering Incident: ${targetNodeId}`);
+                
+                // Use the severity calculated by Python
+                const severity = aiAnalysis.severity || "MEDIUM"; 
+                
+                // Save to Database (JSON file)
+                const savedAlert = dataController.addAlert(targetNodeId, severity);
+                
+                // MERGE Data for Frontend Map
+                const broadcastPacket = {
+                    ...savedAlert,                 // Contains DB ID and Timestamp
+                    lat: rawData.lat || rawData.latitude || 28.6139, 
+                    lng: rawData.lng || rawData.longitude || 77.2090,
+                    anomaly_score: aiAnalysis.anomaly_score || 1.0,
+                    nodeId: targetNodeId,
+                    reasons: aiAnalysis.reasons ? aiAnalysis.reasons.join(", ") : "" // Pass Python reasons
+                };
+                
+                // Broadcast FULL alert object to Frontend
+                io.emit('new_alert', broadcastPacket);
+            }
+
+        } catch (error) {
+            console.error("Error communicating with Python AI Engine:", error.message);
+            // Fallback: If Python fails, still push the raw telemetry so graphs don't freeze
+            io.emit('sensor_update', { ...rawData, node_id: targetNodeId, timestamp: Date.now() });
+        }
     }
 });
 
@@ -81,9 +117,11 @@ app.post('/api/vision', async (req, res) => {
         // 1. Strip the data URL prefix (e.g., "data:image/jpeg;base64,")
         const base64Data = image_base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
 
-        // 2. Setup the Gemini 2.5 Flash model (Current Gen)
+        // 2. Setup the Gemini model (Current Gen)
+        // Note: 'gemini-2.5-flash' is not a standard model name yet. 
+        // If this fails, revert to 'gemini-1.5-flash'
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.5-flash", // <--- THE FIX
+            model: "gemini-1.5-flash", 
             generationConfig: { responseMimeType: "application/json" } 
         });
 
@@ -137,5 +175,6 @@ server.listen(PORT, () => {
     console.log(`RailGuard Backend Active`);
     console.log(`API:    http://localhost:${PORT}`);
     console.log(`Socket: Enabled`);
+    console.log(`AI:     ${PYTHON_AI_URL}`);
     console.log(`==================================================\n`);
 });

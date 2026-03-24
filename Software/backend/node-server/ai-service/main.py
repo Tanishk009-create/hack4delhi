@@ -14,7 +14,7 @@ app = FastAPI()
 # --- STARTUP CHECK ---
 # Look for this banner in your terminal to confirm the update!
 print("\n" + "="*60)
-print("AI SERVICE LOADED: GRAVITY FIX (15.0) | TILT DISABLED")
+print("AI SERVICE LOADED: GRAVITY FIX (15.0) | TILT DISABLED | 3-STAGE LOCK ACTIVE")
 print("="*60 + "\n")
 
 # ===============================
@@ -108,14 +108,31 @@ def predict(data: SensorInput):
         anomaly_score = 0.0
         reasons = []
 
-        # RULE 1: PHYSICS SHAKE (The Fix)
-        # Threshold 15.0 ignores Gravity (9.8). Only triggers on hard shakes.
-        if current_accel_mag > 15.0:
+        # RULE 1: 3-STAGE LOCK & PHYSICS SHAKE (The USP Logic)
+        
+        # Scenario A: High Vibration + High Audio (Sawing/Hammering)
+        if current_accel_mag > 15.0 and data.mic_level > 5.0:
             is_anomaly = True
-            severity = "HIGH"
+            severity = "CRITICAL"
+            anomaly_score = 0.95
+            reasons.append(f"Vibration + Acoustic Match (Mag: {current_accel_mag:.1f})")
+            print(f"==> TAMPERING DETECTED! Mag: {current_accel_mag:.2f}, Mic: {data.mic_level:.2f}")
+
+        # Scenario B: Magnetic Drop (Bolt/Fishplate Removed)
+        elif current_mag_norm < 100: # Adjust this baseline if your sensor reads differently normally
+            is_anomaly = True
+            severity = "CRITICAL"
+            anomaly_score = 0.90
+            reasons.append(f"Magnetic Anomaly (Norm: {current_mag_norm:.1f})")
+            print(f"==> MAG ANOMALY DETECTED! Norm: {current_mag_norm:.2f}")
+
+        # Scenario C: High Vibration Only (Threshold 15.0 ignores Gravity)
+        elif current_accel_mag > 15.0:
+            is_anomaly = True
+            severity = "WARNING"
             # Normalize score (15.0 -> 0.0, 25.0 -> 1.0)
             anomaly_score = min((current_accel_mag - 15.0) / 10.0, 1.0)
-            reasons.append(f"Violent Shake (Mag: {current_accel_mag:.1f})")
+            reasons.append(f"Violent Shake/Possible Train (Mag: {current_accel_mag:.1f})")
             print(f"==> SHAKE DETECTED! Mag: {current_accel_mag:.2f}")
 
         # RULE 2: AI MODEL (Only checks if physics didn't already trigger)
@@ -148,9 +165,11 @@ def predict(data: SensorInput):
             "anomaly_score": round(float(anomaly_score), 2),
             "reasons": reasons,
             "location": {"lat": data.latitude, "lng": data.longitude},
-            # Return mic_level so it's clear we processed it
+            # Return additional fields so Node.js can graph them easily
             "mic_level": data.mic_level,
-            "frequency": data.frequency
+            "frequency": data.frequency,
+            "accel_mag": current_accel_mag,
+            "mag_norm": current_mag_norm
         }
 
     except Exception as e:
