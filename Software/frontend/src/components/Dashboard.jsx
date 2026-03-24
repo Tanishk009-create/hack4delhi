@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import L from "leaflet";
 import axios from "axios";
+import { io } from "socket.io-client"; // <-- BRING BACK SOCKET.IO
 import "leaflet/dist/leaflet.css";
 
 // --- IMPORT YOUR LOCAL LOGOS HERE ---
@@ -57,8 +58,8 @@ const icons = {
 };
 
 // --- API CONFIGURATION ---
-const WS_URL = "ws://localhost:5000/ws/dashboard"; // FastAPI WebSocket
-const API_URL = "http://localhost:3000/api/alerts"; // Keep if using Node for REST, or update to FastAPI
+const NODE_SERVER_URL = "http://localhost:3000"; // <-- POINT TO NODE.JS
+const API_URL = "http://localhost:3000/api/alerts";
 
 // --- STATION COORDINATES (New Delhi Railway Station) ---
 const STATION_LAT = 28.6427;
@@ -104,7 +105,7 @@ export default function Dashboard() {
     );
   };
 
-  // --- EFFECT: WEBSOCKET & DATA HANDLING ---
+  // --- EFFECT: SOCKET.IO & DATA HANDLING ---
   useEffect(() => {
     setNodes({});
     setAlerts([]);
@@ -112,112 +113,87 @@ export default function Dashboard() {
     setSystemLogs([]);
     addLog(`Switched to ${mode} MODE`, "warning");
 
-    let ws = null;
+    let socket = null;
 
     if (mode === "LIVE") {
-      // 1. Connect directly to the FastAPI WebSocket
-      ws = new WebSocket(WS_URL);
+      // 1. Connect to the Node.js Socket.io Server
+      socket = io(NODE_SERVER_URL);
 
-      ws.onopen = () => {
-        addLog("Connected to Unified AI Stream (FastAPI)", "success");
-      };
+      socket.on("connect", () => {
+        addLog("Connected to Node.js Data Stream", "success");
+      });
 
-      ws.onclose = () => {
+      socket.on("disconnect", () => {
         addLog("Disconnected from Backend", "error");
-      };
+      });
 
-      ws.onerror = (error) => {
-        addLog("WebSocket Error Check Console", "error");
-        console.error("WS Error:", error);
-      };
+      // 2. Handle incoming Telemetry (Passed through from Python)
+      socket.on("sensor_update", (data) => {
+        setLastHeartbeat(Date.now());
 
-      // 2. Handle incoming data packets
-      ws.onmessage = (event) => {
-        try {
-          const packet = JSON.parse(event.data);
+        // A. Update Node Map State
+        setNodes((prev) => ({
+          ...prev,
+          [data.node_id]: {
+            lat: data.latitude || STATION_LAT,
+            lng: data.longitude || STATION_LNG,
+            lastSeen: data.timestamp,
+            status: data.is_anomaly
+              ? data.severity === "CRITICAL"
+                ? "red"
+                : "yellow"
+              : "green",
+            battery: 98,
+            rssi: -45,
+          },
+        }));
 
-          // Unpack the nested structure defined in Python
-          const sensorData = packet.sensor_data;
-          const aiData = packet.ai_analysis;
+        // B. Update Telemetry Graphs
+        setTelemetry((prev) => {
+          const newPoint = {
+            time: new Date(data.timestamp).toLocaleTimeString(),
+            node_id: data.node_id,
+            accel_mag: data.accel_mag,
+            accel_roll_rms: data.accel_roll_rms || 0,
+            mag_norm: data.mag_norm,
+            temperature: data.temperature,
+            humidity: data.humidity,
+            pressure: data.pressure,
+            mic_level: data.mic_level || 0,
+            frequency: data.frequency || 0,
+            anomaly_score: data.anomaly_score,
+          };
+          return [...prev, newPoint].slice(-50); // Keep last 50 points
+        });
+      });
 
-          setLastHeartbeat(Date.now());
+      // 3. Handle Alerts
+      socket.on("new_alert", (newAlert) => {
+        setAlerts((prev) => {
+          // Prevent duplicate alerts
+          if (prev.find((a) => a.id === newAlert.id)) return prev;
 
-          // A. Update Node Map State
-          setNodes((prev) => ({
-            ...prev,
-            [sensorData.node_id]: {
-              lat: sensorData.latitude || STATION_LAT,
-              lng: sensorData.longitude || STATION_LNG,
-              lastSeen: sensorData.timestamp,
-              status: aiData.is_anomaly
-                ? aiData.severity === "CRITICAL"
-                  ? "red"
-                  : "yellow"
-                : "green",
-              battery: 98,
-              rssi: -45,
-            },
-          }));
+          // Play sound
+          try {
+            new Audio("/alert.mp3").play().catch(() => {});
+          } catch (e) {}
 
-          // B. Update Telemetry Graphs
-          setTelemetry((prev) => {
-            const newPoint = {
-              time: new Date(sensorData.timestamp).toLocaleTimeString(),
-              node_id: sensorData.node_id,
-              accel_mag: sensorData.accel_mag,
-              accel_roll_rms: sensorData.accel_roll_rms || 0,
-              mag_norm: sensorData.mag_norm,
-              temperature: sensorData.temperature,
-              humidity: sensorData.humidity,
-              pressure: sensorData.pressure,
-              mic_level: sensorData.mic_level || 0,
-              frequency: sensorData.frequency || 0,
-              anomaly_score: aiData.anomaly_score,
-            };
-            return [...prev, newPoint].slice(-50); // Keep last 50 points
-          });
+          addLog(
+            `🚨 ANOMALY: Node ${newAlert.nodeId} | Severity: ${newAlert.severity}`,
+            "error",
+          );
+          return [newAlert, ...prev];
+        });
 
-          // C. Handle AI Alerts (The "3-Stage Lock" logic)
-          if (aiData.is_anomaly) {
-            const newAlert = {
-              id: `ALT-${sensorData.timestamp}`,
-              nodeId: sensorData.node_id,
-              severity: aiData.severity,
-              lat: sensorData.latitude || STATION_LAT,
-              lng: sensorData.longitude || STATION_LNG,
-              status: "OPEN",
-              timestamp: sensorData.timestamp,
-              reasons: aiData.reasons.join(", "),
-            };
-
-            setAlerts((prev) => {
-              // Prevent duplicate alerts for the exact same timestamp
-              if (prev.find((a) => a.id === newAlert.id)) return prev;
-
-              // Play sound for new alerts
-              try {
-                new Audio("/alert.mp3").play().catch(() => {});
-              } catch (e) {}
-
-              addLog(
-                `🚨 ANOMALY: Node ${newAlert.nodeId} | Severity: ${newAlert.severity}`,
-                "error",
-              );
-              return [newAlert, ...prev];
-            });
-
-            // Trigger Camera on High/Critical Severity
-            if (aiData.severity === "HIGH" || aiData.severity === "CRITICAL") {
-              setActiveTab("vision");
-              setCameraActive(true);
-            }
-          }
-        } catch (err) {
-          console.error("Error parsing websocket message:", err);
+        // Trigger Camera
+        if (newAlert.severity === "HIGH" || newAlert.severity === "CRITICAL") {
+          setActiveTab("vision");
+          setCameraActive(true);
         }
-      };
+      });
     } else {
-      if (ws) ws.close();
+      if (socket) socket.disconnect();
+      // TEST MODE SETUP ...
       setNodes({
         "TEST-NODE-01": {
           lat: STATION_LAT,
@@ -238,7 +214,7 @@ export default function Dashboard() {
     }
 
     return () => {
-      if (ws) ws.close();
+      if (socket) socket.disconnect();
     };
   }, [mode]);
 
