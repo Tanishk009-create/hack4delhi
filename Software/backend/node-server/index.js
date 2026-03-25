@@ -8,6 +8,7 @@ const axios = require('axios'); // <--- ADDED for Python API Calls
 const { initSocket } = require('./socket/socket');
 const { connectMQTT } = require('./mqtt/mqttClient');
 const dataController = require('./controllers/dataController');
+const { sendCriticalAlert } = require('./services/alertService'); // <--- IMPORT EMAIL SERVICE
 
 const app = express();
 app.use(cors());
@@ -45,7 +46,6 @@ app.post('/api/alerts/mark-construction', (req, res) => {
 // --- START SYSTEM ---
 
 // Connect to MQTT and pass the "Anomaly Handler" callback
-// We are replacing the standard 'data' pass-through with the Python AI logic layer
 const mqttClient = connectMQTT(async (rawData) => {
     
     // FIX: Normalize the Node ID (Handle both 'nodeId' and 'node_id')
@@ -53,17 +53,11 @@ const mqttClient = connectMQTT(async (rawData) => {
 
     if (targetNodeId) {
         try {
-            // ==========================================
-            // NEW: 1. Send Raw Data to Python AI Engine
-            // ==========================================
-            // The Python engine handles the 3-Stage Lock (Vibration + Mic + Mag)
-            const aiResponse = await axios.post(PYTHON_AI_URL, rawData);
+            // 1. Send Raw Data to Python AI Engine
+            const aiResponse = await axios.post(PYTHON_AI_URL, rawData,{timeout:5000});
             const aiAnalysis = aiResponse.data;
 
-            // ==========================================
-            // NEW: 2. Broadcast Live Telemetry to Dashboard
-            // ==========================================
-            // We emit the live sensor data + AI scores for the graphs
+            // 2. Broadcast Live Telemetry to Dashboard
             const telemetryPacket = {
                 ...rawData,
                 ...aiAnalysis,
@@ -72,42 +66,41 @@ const mqttClient = connectMQTT(async (rawData) => {
             };
             io.emit('sensor_update', telemetryPacket);
 
-            // ==========================================
-            // ==========================================
-            // NEW: 3. Handle Alerts if Python Flags Anomaly
-            // ==========================================
+            // 3. Handle Alerts if Python Flags Anomaly
             if (aiAnalysis.is_anomaly) {
                 const now = Date.now();
                 const lastAlertTime = dashboardAlertCooldowns.get(targetNodeId) || 0;
 
-                // FLOOD PROTECTION: Only trigger a new dashboard incident every 15 seconds
+                // FLOOD PROTECTION: Only trigger a dashboard alert every 15 seconds
                 if (now - lastAlertTime > DASHBOARD_COOLDOWN_TIME) {
-                    dashboardAlertCooldowns.set(targetNodeId, now); // Update cooldown timer
+                    dashboardAlertCooldowns.set(targetNodeId, now); 
                     
-                    console.log(`🚨 Registering New Incident: ${targetNodeId}`);
+                    console.log(`🚨 Anomaly Detected by Sensors: ${targetNodeId}. Waking Camera...`);
                     
                     const severity = aiAnalysis.severity || "CRITICAL"; 
                     const savedAlert = dataController.addAlert(targetNodeId, severity);
                     
-                    // MERGE Data for Frontend Map
                     const broadcastPacket = {
                         ...savedAlert,                 
                         lat: rawData.lat || rawData.latitude || 28.6139, 
                         lng: rawData.lng || rawData.longitude || 77.2090,
                         anomaly_score: aiAnalysis.anomaly_score || 1.0,
                         nodeId: targetNodeId,
-                        severity: severity, // <--- CRITICAL FIX: Ensures React knows to open the camera!
-                        reasons: aiAnalysis.reasons ? aiAnalysis.reasons.join(", ") : "" 
+                        severity: severity,
+                        reasons: aiAnalysis.reasons ? aiAnalysis.reasons.join(", ") : "",
+                        // Pass current telemetry so React can send it back to /vision later
+                        telemetry: {
+                            accel_mag: aiAnalysis.accel_mag,
+                            mag_norm: aiAnalysis.mag_norm
+                        }
                     };
                     
-                    // Broadcast FULL alert object to Frontend
                     io.emit('new_alert', broadcastPacket);
                 }
             }
 
         } catch (error) {
             console.error("Error communicating with Python AI Engine:", error.message);
-            // Fallback: If Python fails, still push the raw telemetry so graphs don't freeze
             io.emit('sensor_update', { ...rawData, node_id: targetNodeId, timestamp: Date.now() });
         }
     }
@@ -120,29 +113,20 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Create the Vision Endpoint
 app.post('/api/vision', async (req, res) => {
-    const { alert_id, image_base64 } = req.body;
+    // UPDATED: Destructure node_id and telemetry passed from React
+    const { alert_id, image_base64, node_id, telemetry } = req.body;
 
     try {
-        // 1. Strip the data URL prefix (e.g., "data:image/jpeg;base64,")
         const base64Data = image_base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
 
-        // 2. Setup the Gemini model (Current Gen)
-        // Note: 'gemini-2.5-flash' is not a standard model name yet. 
-        // If this fails, revert to 'gemini-1.5-flash'
         const model = genAI.getGenerativeModel({ 
             model: "gemini-2.5-flash", 
             generationConfig: { responseMimeType: "application/json" } 
         });
 
-        // 3. The Prompt Engineering (Crucial for accuracy)
         const prompt = `
         You are a highly secure railway monitoring AI. Analyze this image of a railway track.
         Determine if there is any evidence of tampering, sabotage, or unauthorized presence.
-        Look for:
-        - People standing on or dangerously close to the tracks.
-        - Heavy tools (wrenches, hammers, saws, grinders) left on the tracks.
-        - Missing fishplates, removed bolts, or cut rails.
-        
         Respond ONLY with a JSON object in this exact format:
         {
             "confirmed": true/false,
@@ -157,12 +141,40 @@ app.post('/api/vision', async (req, res) => {
             }
         };
 
-        // 4. Send to Gemini
-        const result = await model.generateContent([prompt, imagePart]);
-        const responseText = result.response.text();
+        // const result = await model.generateContent([prompt, imagePart]);
+        // const responseText = result.response.text();
+        // const aiVerdict = JSON.parse(responseText);
         
-        // 5. Parse and Return
-        const aiVerdict = JSON.parse(responseText);
+        // // ==========================================
+        // // NEW: DISPATCH EMAIL ONLY ON VISION CONFIRM
+        // // ==========================================
+        // if (aiVerdict.confirmed === true) {
+        //     console.log(`✅ VISUAL CONFIRMATION: Sending Email Report for ${node_id || "Unknown Node"}`);
+            
+        //     await sendCriticalAlert({
+        //         node_id: node_id || "TRACK_SEC_42",
+        //         severity: "CRITICAL (Visual Confirmation)",
+        //         image: image_base64, // The email service will handle the attachment
+        //         reason: aiVerdict.reason,
+        //         confidence: aiVerdict.confidence,
+        //         accel_mag: telemetry?.accel_mag,
+        //         mag_norm: telemetry?.mag_norm,
+        //         latitude: telemetry?.latitude,
+        //         longitude: telemetry?.longitude
+        //     });
+        // }
+        const result = await model.generateContent([prompt, imagePart]);
+        const responseText = await result.response.text();
+
+let aiVerdict;
+try {
+    // Regex helps strip any markdown (```json ... ```) Gemini might add
+    const cleanJson = responseText.replace(/```json|```/g, "").trim();
+    aiVerdict = JSON.parse(cleanJson);
+} catch (e) {
+    console.error("AI returned malformed JSON:", responseText);
+    return res.status(500).json({ status: "error", message: "AI response parsing failed" });
+}
         
         res.json({
             status: "success",

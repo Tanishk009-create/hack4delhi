@@ -267,11 +267,17 @@ export default function Dashboard() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const base64Image = canvas.toDataURL("image/jpeg", 0.8);
 
+        // --- NEW: Get context to send to backend for the email report ---
+        const latestReading = telemetry.length > 0 ? telemetry[telemetry.length - 1] : {};
+
         try {
           addLog("Sending frame to Gemini VLM for analysis...", "info");
           const res = await axios.post("http://localhost:3000/api/vision", {
             alert_id: `ALT-${Date.now()}`,
             image_base64: base64Image,
+            // Pass these so the backend can include them in the email
+            node_id: selectedNode || latestReading.node_id || "TRACK_SEC_42",
+            telemetry: latestReading 
           });
 
           if (res.data.status === "success") {

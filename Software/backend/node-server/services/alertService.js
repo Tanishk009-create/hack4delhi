@@ -11,12 +11,12 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.error("CRITICAL ERROR: Email credentials are missing. Check your .env file.");
 }
 
-// 1. Configure Email Transporter using .env variables
+// 1. Configure Email Transporter
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: process.env.EMAIL_USER, // <--- Securely loaded
-        pass: process.env.EMAIL_PASS  // <--- Securely loaded
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS  
     }
 });
 
@@ -25,59 +25,72 @@ const alertCooldowns = new Map();
 const COOLDOWN_TIME = 60 * 1000; // 1 Minute
 
 const sendCriticalAlert = async (data) => {
-    // Fail-safe: Don't try to send if credentials are fundamentally broken
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
         console.error("Skipping email alert: Missing credentials.");
         return;
     }
 
-    // Normalize Node ID handling
     const nodeId = data.node_id || data.nodeId || "UNKNOWN_NODE";
     const now = Date.now();
 
-    // Check cooldown
     if (alertCooldowns.has(nodeId)) {
         const lastAlertTime = alertCooldowns.get(nodeId);
         if (now - lastAlertTime < COOLDOWN_TIME) {
-            console.log(`⏳ Alert suppressed for ${nodeId} (Cooldown active)`);
+            console.log(`⏳ Email suppressed for ${nodeId} (Cooldown active)`);
             return;
         }
     }
 
-    // Update cooldown
     alertCooldowns.set(nodeId, now);
 
-    // 3. Compose Email
+    // 3. Compose Email with Image Attachment & AI Reasoning
     const mailOptions = {
-        from: `"RailGuard System" <${process.env.EMAIL_USER}>`,
-        to: process.env.ALERT_RECEIVER, // <--- Loaded from .env
-        subject: `CRITICAL ALERT: Tampering Detected at ${nodeId}`,
+        from: `"RailGuard AI System" <${process.env.EMAIL_USER}>`,
+        to: process.env.ALERT_RECEIVER,
+        subject: `🚨 VISUAL CONFIRMATION: Tampering at ${nodeId}`,
         html: `
-            <div style="font-family: Arial; border: 2px solid red; padding: 20px;">
-                <h2 style="color: red;">⚠️ ANOMALY DETECTED</h2>
+            <div style="font-family: Arial, sans-serif; border: 3px solid #dc2626; padding: 20px; max-width: 600px;">
+                <h2 style="color: #dc2626; margin-top: 0;">⚠️ VISUAL THREAT CONFIRMED</h2>
+                <p style="font-size: 1.1em;"><strong>AI Analysis:</strong> ${data.reason || "Unauthorized activity detected."}</p>
+                <p><strong>AI Confidence:</strong> ${data.confidence || 0}%</p>
+                <hr style="border: 1px solid #eee;" />
+                
                 <p><strong>Node ID:</strong> ${nodeId}</p>
-                <p><strong>Severity:</strong> ${data.severity || 'CRITICAL'}</p>
                 <p><strong>Time:</strong> ${new Date().toLocaleString()}</p>
-                <p><strong>Location:</strong> <a href="https://www.google.com/maps?q=${data.latitude || 28.6139},${data.longitude || 77.2090}">View on Map</a></p>
-                <hr />
-                <h3>Telemetry Snapshot:</h3>
-                <ul>
-                    <li>Vibration (Accel): ${data.accel_mag?.toFixed(3) || 'N/A'} g</li>
-                    <li>Magnetic Field: ${data.mag_norm?.toFixed(2) || 'N/A'} µT</li>
-                    <li>AI Confidence Score: ${data.anomaly_score?.toFixed(3) || 'N/A'}</li>
-                </ul>
+                <p><strong>Location:</strong> <a href="https://www.google.com/maps?q=${data.latitude || 28.6427},${data.longitude || 77.2207}">View Exact Track Location</a></p>
+                
+                <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                    <h3 style="margin-top: 0; font-size: 0.9em; color: #64748b;">SENSOR SNAPSHOT:</h3>
+                    <ul style="list-style: none; padding: 0; margin: 0;">
+                        <li>Vibration: <b>${data.accel_mag?.toFixed(3) || 'N/A'} g</b></li>
+                        <li>Magnetic Flux: <b>${data.mag_norm?.toFixed(2) || 'N/A'} µT</b></li>
+                    </ul>
+                </div>
+
+                <div style="text-align: center; margin: 20px 0;">
+                    <h3 style="text-align: left; font-size: 1em;">Captured Evidence:</h3>
+                    <img src="cid:threatimage" style="width: 100%; border: 2px solid #334155; border-radius: 4px;" alt="Threat Evidence" />
+                </div>
+
                 <br />
-                <a href="http://localhost:5173" style="background: red; color: white; padding: 10px 20px; text-decoration: none;">OPEN DASHBOARD</a>
+                <a href="http://localhost:5173" style="display: block; background: #dc2626; color: white; padding: 12px; text-align: center; text-decoration: none; font-weight: bold; border-radius: 6px;">OPEN COMMAND CENTER</a>
             </div>
-        `
+        `,
+        attachments: data.image ? [{
+        filename: 'evidence.jpg',
+        // This regex ensures we only send the raw data, stripping 'data:image/jpeg;base64,'
+        content: data.image.replace(/^data:image\/(png|jpeg|jpg);base64,/, ""),
+        encoding: 'base64',
+        cid: 'threatimage' // MUST match the src="cid:threatimage" exactly
+    }] : []
     };
 
     // 4. Send
     try {
         await transporter.sendMail(mailOptions);
-        console.log(`==> Email Alert sent for ${nodeId}`);
+        console.log(`✅ Final AI-Verified Email Alert sent for ${nodeId}`);
     } catch (error) {
-        console.error('==> Failed to send email:', error);
+        console.error('❌ Failed to send verified email:', error);
     }
 };
 
