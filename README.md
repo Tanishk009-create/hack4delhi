@@ -85,13 +85,14 @@ graph LR
 ## 🛠 Tech Stack
 
 | Domain | Technology | Description |
-|  |  |  |
-| **Hardware** | `ESP32 / ADXL345` | Edge node collecting Vibration, Magnetic (QMC5883L) & Sound (INMP441) data. |
+| :--- | :--- | :--- |
+| **Track Hardware** | `ESP32 / ADXL345` | Edge node collecting Vibration, Magnetic (QMC5883L) & Sound (INMP441) data. |
+| **V2X Hardware** | `Pico W / ESP32` | Secondary node acting as a Train Impersonator broadcasting approach signals. |
 | **Backend** | `Node.js / Express` | Server acting as the bridge between MQTT, AI, and Frontend. |
-| **AI Engine** | `FastAPI / Gemini` | Physics-based rules for initial anomaly trigger, followed by VLM visual validation. |
+| **Hybrid AI** | `FastAPI / Scikit-Learn` | Physics rules + Isolation Forest ML model for highly accurate anomaly scoring. |
+| **Vision AI** | `Gemini 2.5 Flash` | Cloud VLM used for visual validation of the threat scene. |
 | **Frontend** | `React / Vite` | Dashboard with Leaflet Maps (OpenRailwayMap) & Recharts for live telemetry. |
-| **Comms** | `MQTT / WebSockets`| Low-latency protocol for IoT sensor data transmission to UI. |
-
+| **Comms** | `MQTT / WebSockets`| Low-latency protocol for IoT sensor data and V2X transmission to UI. |
 
 
 ## ⚙️ Installation & Setup
